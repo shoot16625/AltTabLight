@@ -14,6 +14,12 @@ class WindowCaptureScreenshots {
         let scaleFactor: CGFloat
     }
 
+    /// Clears the SCWindow cache so stale entries don't accumulate while the switcher is hidden.
+    /// Called from `App.hideUi()`.
+    static func clearCachedWindows() {
+        cachedSCWindows.withLock { $0.removeAll() }
+    }
+
     static func oneTimeScreenshots(_ windowsToScreenshot: [Window], _ source: RefreshCausedBy, prioritizedIds: Set<CGWindowID>? = nil) {
         // Snapshot Window state on the main thread before hopping to screenshotsQueue. Windows.byWindowId,
         // Window.size, Window.screenId, Screens.all, and NSScreen.preferred are plain (lock-free) dictionaries
@@ -34,15 +40,36 @@ class WindowCaptureScreenshots {
         }
         guard !requests.isEmpty else { return }
         let prioritized = prioritizedIds ?? []
+        // On first show, only capture viewport-visible windows immediately; non-visible windows
+        // are deferred to a subsequent refresh so scrolling is responsive and memory isn't
+        // wasted on offscreen thumbnails that may never be seen.
+        let isFirstShow = source == .refreshOnlyThumbnailsAfterShowUi
+        let windowsToCapture = isFirstShow ? requests.filter { prioritized.contains($0.key) } : requests
+        guard !windowsToCapture.isEmpty else { return }
         BackgroundWork.screenshotsQueue.addOperation {
             guard source != .refreshOnlyThumbnailsAfterShowUi || SwitcherSession.isActive else { return }
-            let (cachedWindows, notCachedWindows) = sortCachedAndNotCached(Array(requests.keys))
+            let (cachedWindows, notCachedWindows) = sortCachedAndNotCached(Array(windowsToCapture.keys))
             Logger.debug { "cached:\(cachedWindows.map { $0.windowID }) notCached:\(notCachedWindows)" }
             // iterate prioritized windows first so they enqueue (and grab queue slots) ahead of the rest
             let sortedCached = cachedWindows.sorted { prioritized.contains($0.windowID) && !prioritized.contains($1.windowID) }
             let sortedNotCached = notCachedWindows.sorted { prioritized.contains($0) && !prioritized.contains($1) }
             handleCachedWindows(sortedCached, requests, source, prioritized)
             handleNotCachedWindows(sortedNotCached, requests, source, prioritized)
+        }
+        // Schedule a deferred capture for non-visible windows so they're ready if the user scrolls
+        if isFirstShow {
+            let nonVisibleKeys = Set(requests.keys).subtracting(prioritized)
+            if !nonVisibleKeys.isEmpty {
+                let deferredRequests = requests.filter { nonVisibleKeys.contains($0.key) }
+                BackgroundWork.screenshotsQueue.addOperationAfter(deadline: .now() + .milliseconds(500)) {
+                    guard SwitcherSession.isActive else { return }
+                    let (cachedWindows, notCachedWindows) = sortCachedAndNotCached(Array(deferredRequests.keys))
+                    let sortedCached = cachedWindows.sorted { prioritized.contains($0.windowID) && !prioritized.contains($1.windowID) }
+                    let sortedNotCached = notCachedWindows.sorted { prioritized.contains($0) && !prioritized.contains($1) }
+                    handleCachedWindows(sortedCached, requests, source, prioritized)
+                    handleNotCachedWindows(sortedNotCached, requests, source, prioritized)
+                }
+            }
         }
     }
 
@@ -146,6 +173,12 @@ class WindowCaptureScreenshotsPrivateApi {
         let list = CGSHWCaptureWindowList(CGS_CONNECTION, &windowId_, 1, [.ignoreGlobalClipShape, .bestResolution, .fullSize]).takeRetainedValue() as! [CGImage]
         ActiveWindowCaptures.decrement()
         return list.first
+    }
+
+    /// Synchronous full-resolution capture of a single window, used by the preview panel.
+    /// Available on all supported macOS versions via the private CGS API.
+    static func capturePreviewSync(_ wid: CGWindowID) -> CGImage? {
+        oneTimeCapture(wid)
     }
 }
 
@@ -299,21 +332,13 @@ extension SCStreamConfiguration {
         // window.size is the logical size and doesn't change with scaleFactor. We need to correct for this as we need to capture more or less pixels depending on DPI.
         let originalSize = NSSize(width: size.width * scaleFactor, height: size.height * scaleFactor)
         guard originalSize.width > 0, originalSize.height > 0 else { return }
-        // Use full-resolution capture if any shortcut has preview-selected-window enabled (could be
-        // the global or a per-shortcut override). Background captures aren't tied to a specific
-        // shortcut, so we err on the side of full-res when any shortcut might need it.
-        let anyPreview = (0...Preferences.maxShortcutCount).contains { Preferences.effectivePreviewSelectedWindow($0) }
-        if anyPreview {
-            width = Int(originalSize.width)
-            height = Int(originalSize.height)
-        } else {
-            // capture screenshots as small as needed for the thumbnails
-            let maxSize = TilesPanel.maxPossibleThumbnailSize
-            guard maxSize.width > 0, maxSize.height > 0 else { return }
-            let scale = min(1.0, maxSize.width / originalSize.width, maxSize.height / originalSize.height)
-            width = Int((originalSize.width * scale).rounded())
-            height = Int((originalSize.height * scale).rounded())
-        }
+        // Always capture screenshots at thumbnail size — previews get their own full-resolution
+        // capture in `WindowThumbnails.capturePreviewForSelectedWindow`.
+        let maxSize = TilesPanel.maxPossibleThumbnailSize
+        guard maxSize.width > 0, maxSize.height > 0 else { return }
+        let scale = min(1.0, maxSize.width / originalSize.width, maxSize.height / originalSize.height)
+        width = Int((originalSize.width * scale).rounded())
+        height = Int((originalSize.height * scale).rounded())
     }
 }
 

@@ -60,7 +60,9 @@ class Application: NSObject {
     /// MacOS Big Sur also introduced a constant padding around app icons. It was later increased with Tahoe. We have to crop it
     static func appIconWithoutPadding(_ icon: NSImage?) -> CGImage? {
         guard let icon else { return nil }
-        let finalWidth = max(TilesPanel.maxPossibleAppIconSize.width, TilesPanel.maxPossibleAppIconSize.height)
+        let displaySize = TileView.iconSize()
+        let screenScale = NSScreen.main?.backingScaleFactor ?? 2.0
+        let finalWidth = max(displaySize.width, displaySize.height) * screenScale
         // we hardcode cropping values based on a reference 1024 icon, and depending on the macOS version
         let padding = appIconPadding * (finalWidth / (1024 - appIconPadding * 2))
         // we need a bigger image size, since we'll crop to reach finalWidth

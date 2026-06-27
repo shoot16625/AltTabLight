@@ -3,18 +3,45 @@ import Cocoa
 /// Off-main-thread screenshot capture for window thumbnails, plus the
 /// "preview the selected window" overlay shown next to the switcher panel.
 enum WindowThumbnails {
+    /// Throttle guard: only one preview capture per window per show-session.
+    private static var previewCaptureDispatched = Set<CGWindowID>()
+
+    static func resetPreviewState() {
+        previewCaptureDispatched.removeAll()
+    }
+
     static func previewSelectedIfNeeded() {
-        if let session = SwitcherSession.current, ScreenRecordingPermission.status == .granted
-               && Preferences.effectivePreviewSelectedWindow(session.shortcutIndex)
-               && TilesPanel.shared.isKeyWindow,
-           let window = Windows.selectedWindow(),
-           let id = window.cgWindowId,
-           let thumbnail = window.thumbnail,
-           let position = window.position,
-           let size = window.size {
-            PreviewPanel.show(id, thumbnail, position, size)
-        } else {
+        guard let session = SwitcherSession.current, ScreenRecordingPermission.status == .granted
+                && Preferences.effectivePreviewSelectedWindow(session.shortcutIndex)
+                && TilesPanel.shared.isKeyWindow,
+              let window = Windows.selectedWindow(),
+              let id = window.cgWindowId,
+              let position = window.position,
+              let size = window.size else {
             PreviewPanel.shared.orderOut(nil)
+            return
+        }
+        // Use full-resolution preview image when available; fall back to the thumbnail
+        let preview = window.previewImage ?? window.thumbnail
+        if let preview {
+            PreviewPanel.show(id, preview, position, size)
+        }
+        // Trigger a full-resolution capture in the background if not already scheduled
+        if window.previewImage == nil && !previewCaptureDispatched.contains(id) {
+            previewCaptureDispatched.insert(id)
+            BackgroundWork.screenshotsQueue.addOperation { [weak window] in
+                guard let window, let wid = window.cgWindowId else { return }
+                guard let image = WindowCaptureScreenshotsPrivateApi.capturePreviewSync(wid) else { return }
+                DispatchQueue.main.async { [weak window] in
+                    guard let window, SwitcherSession.isActive else { return }
+                    window.previewImage = .cgImage(image)
+                    // If this window is still the selected one, update the preview
+                    if let selected = Windows.selectedWindow(), selected.cgWindowId == wid,
+                       let position = window.position, let size = window.size {
+                        PreviewPanel.show(wid, .cgImage(image), position, size)
+                    }
+                }
+            }
         }
     }
 

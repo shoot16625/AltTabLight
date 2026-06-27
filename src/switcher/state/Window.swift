@@ -19,6 +19,7 @@ class Window {
     var state: WindowState
     var cgWindowId: CGWindowID?
     var thumbnail: CALayerContents?
+    var previewImage: CALayerContents?
     var icon: CGImage? { get { application.icon } }
     var shouldShowTheUser = true
     var tabbedSiblingWids: [CGWindowID]?
@@ -102,6 +103,18 @@ class Window {
     /// long-running sessions (issue #5612 etc.).
     /// Called from `Windows.removeWindows`. CFRunLoopRemoveSource is thread-safe so
     /// invoking from the main thread on another runloop's source is fine.
+    func releaseThumbnail() {
+        thumbnail = nil
+        previewImage = nil
+    }
+
+    func clearSearchResults() {
+        swAppResults = []
+        swTitleResults = []
+        swBestSimilarity = 0.0
+        lastSearchQuery = nil
+    }
+
     func releaseAxObserver() {
         if let axObserver, let runLoop = BackgroundWork.accessibilityEventsThread?.runLoop {
             CFRunLoopRemoveSource(runLoop, AXObserverGetRunLoopSource(axObserver), .commonModes)

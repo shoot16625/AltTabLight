@@ -405,8 +405,21 @@ class Windows {
         if let wid = window.cgWindowId {
             byWindowId[wid] = window
         }
-        if list.count > TilesView.recycledViews.count {
-            TilesView.recycledViews.append(TileView())
+        TilesView.resizePool()
+    }
+
+    static func releaseAllThumbnails() {
+        for window in list {
+            window.releaseThumbnail()
+        }
+        for view in TilesView.recycledViews {
+            view.thumbnail.releaseImage()
+        }
+    }
+
+    static func clearAllSearchResults() {
+        for window in list {
+            window.clearSearchResults()
         }
     }
 
@@ -479,6 +492,7 @@ class Windows {
         if addWindowlessWindowIfNeeded {
             windows.forEach { $0.application.addWindowlessWindowIfNeeded() }
         }
+        TilesView.resizePool()
         App.refreshOpenUiAfterExternalEvent([], windowRemoved: true)
     }
 }

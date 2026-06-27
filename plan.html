@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>AltTab macOS メモリ軽量化計画</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 960px; margin: 40px auto; padding: 0 20px; line-height: 1.6; color: #333; background: #fff; }
+  h1 { border-bottom: 2px solid #eee; padding-bottom: 10px; }
+  h2 { margin-top: 30px; border-left: 4px solid #007aff; padding-left: 12px; }
+  h3 { margin-top: 24px; }
+  .meta { color: #666; font-size: 0.9em; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; font-weight: 600; vertical-align: middle; }
+  .tag-high { background: #ffe0e0; color: #c00; }
+  .tag-medium { background: #fff3cd; color: #856404; }
+  .tag-low { background: #d1ecf1; color: #0c5460; }
+  .tag-easy { background: #d4edda; color: #155724; }
+  .tag-hard { background: #e8d4ed; color: #6c3a7a; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 0.9em; }
+  th, td { border: 1px solid #ddd; padding: 8px 12px; text-align: left; }
+  th { background: #f5f5f5; }
+  code { background: #f4f4f4; padding: 2px 6px; border-radius: 3px; font-size: 0.9em; }
+  .file { font-family: 'SF Mono', monospace; color: #555; font-size: 0.85em; }
+  .summary-box { background: #f8f9fa; border: 1px solid #ddd; border-radius: 8px; padding: 16px 20px; margin: 20px 0; }
+  .warn-box { background: #fff3cd; border: 1px solid #ffc107; border-radius: 8px; padding: 12px 16px; margin: 12px 0; }
+</style>
+</head>
+<body>
+
+<h1>AltTab macOS メモリ軽量化計画</h1>
+<p class="meta">作成日: 2026-06-25 | 対象: ~450MB (Mac Pro) のメモリ使用量削減</p>
+
+<div class="summary-box">
+  <strong>根本原因:</strong> アプリが非表示の間も、全ウインドウのサムネイル（非圧縮 BGRA/IOSurface）とアプリアイコンがメモリ上に保持され続ける。<br>
+  <strong>推定内訳:</strong> サムネイル ~60-75%、アプリアイコン ~10-15%、その他キャッシュ ~10-15%
+</div>
+
+<h2>現状分析</h2>
+
+<h3>1. サムネイルの保持（最大の原因）</h3>
+<table>
+  <tr><th>箇所</th><th>内容</th><th>メモリ影響</th></tr>
+  <tr>
+    <td><span class="file">src/switcher/state/Window.swift:21</span></td>
+    <td><code>var thumbnail: CALayerContents?</code> — 全 <code>Window</code> オブジェクトが非圧縮の CGImage / CVPixelBuffer を保持</td>
+    <td><strong>大</strong>: Retina 2880x1800 x 4bytes = ~20MB/枚 x 50枚 = ~1GB</td>
+  </tr>
+  <tr>
+    <td><span class="file">src/switcher/state/WindowThumbnails.swift:22-42</span></td>
+    <td><code>refreshAsync</code> が全ウインドウにサムネイル取得をディスパッチ</td>
+    <td>スイッチャー表示時、画面外のウインドウも全件取得</td>
+  </tr>
+  <tr>
+    <td><span class="file">src/events/WindowCaptureEvents.swift:305-308</span></td>
+    <td>プレビュー有効時、全サムネイルをフル解像度で取得（retina 実サイズ）</td>
+    <td><strong>致命的</strong>: 1ショートカットでもプレビュー有効だと全サムネイルが最大サイズに</td>
+  </tr>
+  <tr>
+    <td><span class="file">src/App.swift:287-288</span></td>
+    <td><code>refreshOpenUiAfterExternalEvent</code> で外部イベント毎にサムネイル再取得</td>
+    <td>ウインドウの移動/リサイズのたびに新しい IOSurface を確保</td>
+  </tr>
+</table>
+
+<h3>2. サムネイルがスイッチャー非表示時に解放されない</h3>
+<p><code>hideUi()</code>（<span class="file">src/App.swift:63-79</span>）ではパネルを隠すのみで、<code>Window.thumbnail</code> や <code>TileView</code> の contents は解放しない。</p>
+
+<div class="warn-box">
+  スイッチャーは通常ユーザが一瞬だけ見る UI。にもかかわらずサムネイルはアプリ終了まで保持され続ける。
+</div>
+
+<h3>3. アプリアイコンがフル解像度で常駐</h3>
+<table>
+  <tr><th>箇所</th><th>内容</th></tr>
+  <tr>
+    <td><span class="file">src/switcher/state/Application.swift:20</span></td>
+    <td><code>var icon: CGImage?</code> — 全アプリのアイコンを保持（50-100個）</td>
+  </tr>
+  <tr>
+    <td><span class="file">src/switcher/state/Application.swift:61-79</span></td>
+    <td><code>appIconWithoutPadding</code> — 最大画面サイズでレンダリングされた高解像度 CGImage</td>
+  </tr>
+</table>
+
+<h3>4. キャッシュの無制限成長</h3>
+<table>
+  <tr><th>箇所</th><th>内容</th></tr>
+  <tr>
+    <td><span class="file">src/preferences/Preferences.swift:433</span></td>
+    <td><code>CachedUserDefaults.cache</code> — ConcurrentMap が全 UserDefaults 値を無限キャッシュ。設定画面を開くまで削除されない</td>
+  </tr>
+  <tr>
+    <td><span class="file">src/events/WindowCaptureEvents.swift:9</span></td>
+    <td><code>cachedSCWindows</code> — SCWindow オブジェクトが蓄積。ウインドウ削除時のみ削除</td>
+  </tr>
+  <tr>
+    <td><span class="file">src/App.swift:17</span></td>
+    <td><code>CGImage.allNamed("app.icns")</code> — icns ファイルの全フレームを起動時に読み込み</td>
+  </tr>
+</table>
+
+<h2>削減計画</h2>
+
+<h3>Phase 1: クイックウィン（高効果・低リスク）</h3>
+
+<h4>#1 スイッチャー非表示時にサムネイルを解放</h4>
+<table>
+  <tr><th>ファイル</th><th>変更内容</th></tr>
+  <tr><td><span class="file">src/switcher/state/Window.swift</span></td><td><code>func releaseThumbnail()</code> 追加 — <code>thumbnail = nil</code></td></tr>
+  <tr><td><span class="file">src/switcher/state/Windows.swift</span></td><td><code>static func releaseAllThumbnails()</code> 追加 — 全 Window + recycledViews の contents 解放</td></tr>
+  <tr><td><span class="file">src/App.swift</span> <code>hideUi()</code></td><td><code>Windows.releaseAllThumbnails()</code> 呼び出し追加。プレビューパネルも解放</td></tr>
+</table>
+<p><span class="tag tag-high">効果: HIGH</span> <span class="tag tag-easy">難易度: EASY</span> — 推定 60-75% メモリ削減。半日作業</p>
+
+<h4>#2 プレビュー表示中のみフル解像度キャプチャ</h4>
+<table>
+  <tr><th>ファイル</th><th>変更内容</th></tr>
+  <tr><td><span class="file">src/events/WindowCaptureEvents.swift:305-308</span></td><td>サムネイルキャプチャを常に縮小サイズに。フル解像度キャプチャを選択ウインドウのみに分離</td></tr>
+  <tr><td><span class="file">src/switcher/state/WindowThumbnails.swift</span></td><td>プレビュー用フル解像度キャプチャパスを追加</td></tr>
+</table>
+<p><span class="tag tag-high">効果: HIGH</span> <span class="tag tag-easy">難易度: MEDIUM</span> — 推定 20-30% 追加削減（#1 との合算）。1日作業</p>
+
+<h4>#3 スイッチャー非表示時にプレビュー用 IOSurface を解放</h4>
+<table>
+  <tr><th>ファイル</th><th>変更内容</th></tr>
+  <tr><td><span class="file">src/switcher/PreviewPanel.swift</span></td><td><code>static func clear()</code> 追加 — 常に contents 解放（ウインドウ削除に依存しない）</td></tr>
+  <tr><td><span class="file">src/App.swift</span> <code>hideUi()</code></td><td><code>PreviewPanel.clear()</code> 呼び出し追加</td></tr>
+</table>
+<p><span class="tag tag-medium">効果: MEDIUM</span> <span class="tag tag-easy">難易度: EASY</span> — 推定 1-3% 削減。30分作業</p>
+
+<h3>Phase 2: メモリ効率改善（中効果・中リスク）</h3>
+
+<h4>#4 サムネイル圧縮（JPEG/HEIC）</h4>
+<table>
+  <tr><th>ファイル</th><th>変更内容</th></tr>
+  <tr><td><span class="file">src/events/WindowCaptureEvents.swift</span></td><td>キャプチャ後、CGImageDestination で JPEG/HEIC 圧縮して Data として保持</td></tr>
+  <tr><td><span class="file">src/switcher/state/Window.swift</span></td><td><code>thumbnail: Data?</code> として圧縮データ保持。表示時のみデコード</td></tr>
+  <tr><td><span class="file">src/kit/LightImageLayer.swift</span></td><td>圧縮 Data から表示用 CGImage を生成するパスを追加</td></tr>
+</table>
+<p><span class="tag tag-high">効果: HIGH</span> <span class="tag tag-hard">難易度: HARD</span> — 圧縮率 10-20x（20MB -> 100-500KB）。トレードオフ: 表示時にデコードCPU負荷</p>
+
+<h4>#5 ビューポート可視ウインドウのみ優先キャプチャ</h4>
+<table>
+  <tr><th>ファイル</th><th>変更内容</th></tr>
+  <tr><td><span class="file">src/switcher/state/WindowThumbnails.swift</span></td><td>可視ウインドウのみ即時キャプチャ、非可視は遅延キャプチャ or スクロール時</td></tr>
+  <tr><td><span class="file">src/App.swift:371</span></td><td><code>prioritizedIds</code> 経由で既に枠組みはある。それを全キャプチャではなく選択的に</td></tr>
+</table>
+<p><span class="tag tag-medium">効果: MEDIUM</span> <span class="tag tag-easy">難易度: MEDIUM</span> — 2日作業</p>
+
+<h4>#6 アプリアイコンの解像度最適化</h4>
+<table>
+  <tr><th>ファイル</th><th>変更内容</th></tr>
+  <tr><td><span class="file">src/switcher/state/Application.swift:63</span></td><td><code>maxPossibleAppIconSize</code> ではなく実際のタイル表示サイズでレンダリング</td></tr>
+</table>
+<p><span class="tag tag-medium">効果: MEDIUM</span> <span class="tag tag-easy">難易度: EASY</span> — 推定 5-10% 削減。2時間作業</p>
+
+<h3>Phase 3: キャッシュ管理改善（低効果・低リスク）</h3>
+
+<h4>#7 CachedUserDefaults 定期的な削除</h4>
+<table>
+  <tr><th>ファイル</th><th>変更内容</th></tr>
+  <tr><td><span class="file">src/preferences/Preferences.swift:433</span></td><td>タイマーで定期的に cache を clear（5分毎 or メモリ警告時）</td></tr>
+</table>
+<p><span class="tag tag-low">効果: LOW</span> <span class="tag tag-easy">難易度: EASY</span> — 30分作業</p>
+
+<h4>#8 cachedSCWindows 定期的な削除</h4>
+<table>
+  <tr><th>ファイル</th><th>変更内容</th></tr>
+  <tr><td><span class="file">src/events/WindowCaptureEvents.swift:9</span></td><td>スイッチャー非表示時にキャッシュをクリア</td></tr>
+</table>
+<p><span class="tag tag-low">効果: LOW</span> <span class="tag tag-easy">難易度: EASY</span> — 30分作業</p>
+
+<h4>#9 TileView プールの動的管理</h4>
+<table>
+  <tr><th>ファイル</th><th>変更内容</th></tr>
+  <tr><td><span class="file">src/switcher/main-window/TilesView.swift:35</span></td><td>20固定から実際のウインドウ数に応じて動的に。未使用ビューの contents 確実解放</td></tr>
+</table>
+<p><span class="tag tag-low">効果: LOW</span> <span class="tag tag-easy">難易度: EASY</span> — 1時間作業</p>
+
+<h4>#10 検索結果のメモリ削減</h4>
+<table>
+  <tr><th>ファイル</th><th>変更内容</th></tr>
+  <tr><td><span class="file">src/switcher/state/Window.swift:35-38</span></td><td><code>clearSearchResults()</code> 追加、スイッチャー非表示時に呼び出し</td></tr>
+</table>
+<p><span class="tag tag-low">効果: LOW</span> <span class="tag tag-easy">難易度: EASY</span> — 30分作業</p>
+
+<h2>推奨実装順序と推定効果</h2>
+
+<table>
+  <tr><th>順位</th><th>項目</th><th>推定削減量</th><th>工数</th><th>累積削減</th></tr>
+  <tr><td>1</td><td>#1 スイッチャー非表示時にサムネイル解放</td><td>~60-75%</td><td>半日</td><td>~60-75%</td></tr>
+  <tr><td>2</td><td>#3 プレビュー IOSurface 解放</td><td>~1-3%</td><td>30分</td><td>~61-78%</td></tr>
+  <tr><td>3</td><td>#6 アイコン解像度最適化</td><td>~5-10%</td><td>2時間</td><td>~66-88%</td></tr>
+  <tr><td>4</td><td>#10 検索結果クリア</td><td>~1%</td><td>30分</td><td>~67-89%</td></tr>
+  <tr><td>5</td><td>#7 #8 キャッシュ管理</td><td>~1-2%</td><td>1時間</td><td>~68-91%</td></tr>
+  <tr><td>6</td><td>#2 フル解像度キャプチャ分離</td><td>~20-30%（上乗せ）</td><td>1日</td><td>~80-95%</td></tr>
+  <tr><td>7</td><td>#5 ビューポート優先キャプチャ</td><td>~0-5%（上乗せ）</td><td>2日</td><td>~80-95%</td></tr>
+  <tr><td>8</td><td>#4 サムネイル圧縮</td><td>~80-95%（理論値）</td><td>2-3日</td><td>~90-99%</td></tr>
+</table>
+
+<h2>計測と検証方法</h2>
+<ol>
+  <li><strong>Xcode Memory Debugger:</strong> 各フェーズ後、ヒープ全体のスナップショットを取得</li>
+  <li><strong>Allocations Instrument:</strong> サムネイル/CGImage/IOSurface のライブアロケーション数とサイズを追跡</li>
+  <li><strong>VM Tracker:</strong> 物理メモリと仮想メモリの使用量変化を確認</li>
+  <li><strong>手動テスト:</strong> 50+ ウインドウを開いた状態でスイッチャー表示/非表示を繰り返し、メモリ使用量を確認</li>
+  <li><strong>既存のビルド:</strong> <code>ai/build.sh</code> でコンパイル確認 + ユニットテスト通過確認</li>
+</ol>
+
+<h2>リスクと注意点</h2>
+<ul>
+  <li><strong>#1 のトレードオフ:</strong> スイッチャー非表示→再表示時に全サムネイル再キャプチャが発生。表示が一瞬遅くなる（通常 100-300ms）。プレビュー選択中ウインドウだけは保持するなどの最適化も検討可能</li>
+  <li><strong>#4 のトレードオフ:</strong> JPEG/HEIC 圧縮は CPU 負荷とのトレードオフ。毎秒のキャプチャ更新時に常に圧縮処理が走る。HEIC ハードウェアエンコード対応の Apple Silicon では影響軽微</li>
+  <li><strong>リークの再発防止:</strong> <code>releaseThumbnail()</code> など新しい解放パスがリークにならないよう <code>deinit</code> でも安全に動作することを確認</li>
+  <li><strong>Space 切り替え時の動作:</strong> サムネイル解放後に Space を切り替えて戻ってきた時、サムネイルが正しく再取得されることを確認</li>
+  <li><strong>keychain/license 不変性:</strong> License / Keychain のコードには一切触れない（AGENTS.md の制約）</li>
+</ul>
+
+</body>
+</html>

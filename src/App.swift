@@ -74,6 +74,14 @@ class App: AppCenterApplication {
         if !keepPreview {
             PreviewPanel.shared.orderOut(nil)
         }
+        Windows.releaseAllThumbnails()
+        Windows.clearAllSearchResults()
+        WindowThumbnails.resetPreviewState()
+        PreviewPanel.clear()
+        PreviewPanel.shared.orderOut(nil)
+        if #available(macOS 14.0, *) {
+            WindowCaptureScreenshots.clearCachedWindows()
+        }
         MainMenu.toggle(true)
         ProTransitionManager.shared.onSwitcherDismissed()
     }
@@ -417,6 +425,7 @@ class App: AppCenterApplication {
             App.updaterController?.startUpdater()
         }
         PreferencesEvents.initialize()
+        CachedUserDefaults.startPeriodicClear()
         BenchmarkRunner.startIfNeeded()
         showSettingsWindowOnFirstLaunchIfNeeded()
         if pendingShowSettingsWindow {

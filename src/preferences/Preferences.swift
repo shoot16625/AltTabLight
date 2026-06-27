@@ -431,6 +431,23 @@ class Preferences {
 
 class CachedUserDefaults {
     static var cache = ConcurrentMap<String, Any>()
+    private static var clearTimer: DispatchSourceTimer?
+
+    /// Start a recurring timer that clears the cache periodically so stale entries don't
+    /// accumulate indefinitely. Call once during app launch (e.g. from Preferences.initialize).
+    static func startPeriodicClear(interval: DispatchTimeInterval = .seconds(300)) {
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + interval, repeating: interval, leeway: .seconds(30))
+        timer.setEventHandler { cache.withLock { $0.removeAll() } }
+        clearTimer = timer
+        timer.resume()
+    }
+
+    /// Stop the periodic clear timer (e.g. on app termination).
+    static func stopPeriodicClear() {
+        clearTimer?.cancel()
+        clearTimer = nil
+    }
 
     static func removeFromCache(_ key: String) {
         cache.withLock { $0.removeValue(forKey: key) }

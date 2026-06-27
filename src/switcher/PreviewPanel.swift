@@ -60,6 +60,15 @@ class PreviewPanel: NSPanel {
         }
     }
 
+    /// Called when the switcher is hidden: unconditionally releases the preview IOSurface so
+    /// the full-resolution screenshot can deallocate. Unlike `clearIfShowing` (which only
+    /// clears when the window is removed), this always clears so memory is reclaimed even
+    /// when the user simply dismisses the switcher.
+    static func clear() {
+        previewView.releaseImage()
+        currentId = nil
+    }
+
     /// Called when a window is removed from `Windows.list`: if our preview was showing that
     /// window, drop the cached IOSurface in `previewView.contents` so it can deallocate.
     /// Without this, closing the previewed window in the background leaves its full-resolution

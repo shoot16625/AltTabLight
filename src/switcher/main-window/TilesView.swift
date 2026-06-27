@@ -31,10 +31,25 @@ class TilesView {
         configureSearchField()
         configureNoWindowLabel()
         updateBackgroundView()
-        // TODO: think about this optimization more
-        (1...20).forEach { _ in TilesView.recycledViews.append(TileView()) }
+        resizePool()
         Self.updateCachedSizes()
         initialized = true
+    }
+
+    /// Dynamically resizes the recycled-views pool to match the actual window count,
+    /// releasing image data from any excess views. Prevents the fixed 20-view pool
+    /// from holding memory for windows that no longer exist.
+    static func resizePool() {
+        let needed = max(Windows.list.count, 1)
+        while recycledViews.count < needed {
+            recycledViews.append(TileView())
+        }
+        while recycledViews.count > needed {
+            let view = recycledViews.removeLast()
+            view.thumbnail.releaseImage()
+            view.appIcon.releaseImage()
+            view.window_ = nil
+        }
     }
 
     static var isSearchModeOn: Bool { searchMode != .off }
