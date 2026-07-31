@@ -68,7 +68,10 @@ class ControlsTab {
             (NSLocalizedString("Hold to trigger switcher", comment: ""), Preferences.indexToName("holdShortcut", 0), Preferences.shortcut(Preferences.indexToName("holdShortcut", 0))),
         ]
         for (label, id, shortcut) in rows {
-            table.addRow(leftText: label, rightViews: LabelAndControl.makeLabelWithRecorder(label, id, shortcut))
+            // `makeLabelWithRecorder` builds [label, recorder]; the row's left column shows the
+            // label, so only the recorder goes on the right — no duplicated text.
+            let views = LabelAndControl.makeLabelWithRecorder(label, id, shortcut)
+            table.addRow(leftText: label, rightViews: views[1])
         }
         return TableGroupSetView(originalViews: [table], padding: 0, bottomPadding: 0)
     }
