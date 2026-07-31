@@ -25,7 +25,7 @@ class Appearance {
     // theme
     static var fontColor = NSColor.red
     static var imagesShadowColor = NSColor.red // for icon, thumbnail and windowless images
-    static var material = NSVisualEffectView.Material.ultraDark
+    static var material = NSVisualEffectView.Material.popover
     static var highlightBorderWidth = CGFloat(3)
 
     // theme: constants
@@ -41,7 +41,7 @@ class Appearance {
     private static var currentSize: AppearanceSizePreference { Preferences.effectiveAppearanceSize(SwitcherSession.activeShortcutIndex) }
     static var currentTheme: AppearanceThemePreference {
         let theme = Preferences.effectiveAppearanceTheme(SwitcherSession.activeShortcutIndex)
-        return theme == .system ? NSAppearance.current.getThemeName() : theme
+        return theme == .system ? NSAppearance.currentDrawing().getThemeName() : theme
     }
 
     static func update() {
@@ -190,12 +190,12 @@ class Appearance {
     private static func lightTheme() {
         fontColor = .black.withAlphaComponent(0.8)
         imagesShadowColor = .gray.withAlphaComponent(0.8)
-        material = .mediumLight
+        material = .windowBackground
     }
 
     private static func darkTheme() {
         fontColor = .white.withAlphaComponent(0.85)
         imagesShadowColor = .gray.withAlphaComponent(0.8)
-        material = .dark
+        material = .sidebar
     }
 }

@@ -20,5 +20,4 @@ final class SwitcherSession {
     var selectedIndex: Int = 0
     var hoveredIndex: Int?
     var selectedTarget: String?
-    var searchQuery: String = ""
 }

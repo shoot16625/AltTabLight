@@ -12,6 +12,10 @@ class WindowCaptureScreenshots {
         let window: Window
         let size: CGSize
         let scaleFactor: CGFloat
+        /// cgWindowId of the currently-selected window (snapshotted on main). Only that window's
+        /// capture needs full resolution (it feeds the preview overlay); every other thumbnail is
+        /// captured at thumbnail size — a large memory saving with many windows open.
+        let previewedWindowId: CGWindowID?
     }
 
     static func oneTimeScreenshots(_ windowsToScreenshot: [Window], _ source: RefreshCausedBy, prioritizedIds: Set<CGWindowID>? = nil) {
@@ -21,6 +25,12 @@ class WindowCaptureScreenshots {
         // races with main-thread mutation and can corrupt the heap.
         // Trade-off: size is fixed at call time, so a window resized between snapshot and capture will be captured
         // at the old size. Acceptable because the next refresh will re-snapshot.
+        // Only the windows currently visible in the panel's viewport need fresh thumbnails; the
+        // rest would consume capture time and pixel memory for tiles the user can't see.
+        let windowsToScreenshot = source == .refreshOnlyThumbnailsAfterShowUi && prioritizedIds != nil
+            ? windowsToScreenshot.filter { $0.cgWindowId.map { prioritizedIds!.contains($0) } ?? false }
+            : windowsToScreenshot
+        let previewedWindowId = Windows.selectedWindow()?.cgWindowId
         var requests = [CGWindowID: CaptureRequest]()
         for window in windowsToScreenshot {
             guard let wid = window.cgWindowId, let size = window.size else { continue }
@@ -30,7 +40,7 @@ class WindowCaptureScreenshots {
             } else {
                 scaleFactor = NSScreen.preferred.backingScaleFactor
             }
-            requests[wid] = CaptureRequest(window: window, size: size, scaleFactor: scaleFactor)
+            requests[wid] = CaptureRequest(window: window, size: size, scaleFactor: scaleFactor, previewedWindowId: previewedWindowId)
         }
         guard !requests.isEmpty else { return }
         let prioritized = prioritizedIds ?? []
@@ -96,7 +106,7 @@ class WindowCaptureScreenshots {
         // [weak window] avoids keeping a closed Window alive while the capture is queued or in-flight with the OS
         Applications.screenshotThrottler.throttleOrProceed(key: "capture-wid-\(scWindow.windowID)", queue: BackgroundWork.screenshotsQueue, priority: isPrioritized ? .high : .normal) { [weak window = request.window] in
             guard !App.isTerminating, !ScreenLockEvents.isScreenLocked, let window else { return }
-            let config = SCStreamConfiguration.forWindow(scWindow, size, scaleFactor, false)
+            let config = SCStreamConfiguration.forWindow(scWindow, size, scaleFactor, false, request.previewedWindowId == scWindow.windowID)
             let filter = SCContentFilter(desktopIndependentWindow: scWindow)
             ActiveWindowCaptures.increment()
             SCScreenshotManager.captureSampleBuffer(contentFilter: filter, configuration: config) { [weak window] sampleBuffer, error in
@@ -277,9 +287,9 @@ class WindowCaptureScreenshotsPrivateApi {
 extension SCStreamConfiguration {
     // size/scaleFactor are snapshotted on the main thread by the caller; we do not touch Window state here
     // (Window properties are mutated on main and would race with this background work).
-    static func forWindow(_ scWindow: SCWindow, _ size: CGSize, _ scaleFactor: CGFloat, _ video: Bool) -> SCStreamConfiguration {
+    static func forWindow(_ scWindow: SCWindow, _ size: CGSize, _ scaleFactor: CGFloat, _ video: Bool, _ isPreviewedWindow: Bool = false) -> SCStreamConfiguration {
         let config = SCStreamConfiguration()
-        config.setWindowSize(size, scaleFactor)
+        config.setWindowSize(size, scaleFactor, isPreviewedWindow)
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.showsCursor = false
         // if video {
@@ -295,15 +305,13 @@ extension SCStreamConfiguration {
         return config
     }
 
-    private func setWindowSize(_ size: CGSize, _ scaleFactor: CGFloat) {
+    private func setWindowSize(_ size: CGSize, _ scaleFactor: CGFloat, _ isPreviewedWindow: Bool) {
         // window.size is the logical size and doesn't change with scaleFactor. We need to correct for this as we need to capture more or less pixels depending on DPI.
         let originalSize = NSSize(width: size.width * scaleFactor, height: size.height * scaleFactor)
         guard originalSize.width > 0, originalSize.height > 0 else { return }
-        // Use full-resolution capture if any shortcut has preview-selected-window enabled (could be
-        // the global or a per-shortcut override). Background captures aren't tied to a specific
-        // shortcut, so we err on the side of full-res when any shortcut might need it.
-        let anyPreview = (0...Preferences.maxShortcutCount).contains { Preferences.effectivePreviewSelectedWindow($0) }
-        if anyPreview {
+        // Full-resolution capture only for the previewed window (it feeds the preview overlay).
+        // Every other thumbnail is captured at thumbnail size — a large memory saving.
+        if isPreviewedWindow && Preferences.effectivePreviewSelectedWindow(0) {
             width = Int(originalSize.width)
             height = Int(originalSize.height)
         } else {

@@ -5,11 +5,6 @@ class CursorEvents {
     private static var eventTap: CFMachPort!
     private static var shouldBeEnabled: Bool!
     private static var mouseDownTarget: AnyObject?
-    private static var mouseDownInsideSearchField = false
-    /// true once the tap has observed a leftMouseDown since the switcher showed (reset per gesture and on
-    /// each show). A drag from another app started before the switcher showed, so its down was never seen —
-    /// that is how `handleLeftMouseUp` recognizes a drop's up and yields it (see `DragAndDropResolver`).
-    private static var sawLeftMouseDown = false
     static var deadZoneInitialPosition: CGPoint?
     static var isAllowedToMouseHover = true
 
@@ -22,8 +17,6 @@ class CursorEvents {
         shouldBeEnabled = enabled
         if !enabled {
             deadZoneInitialPosition = nil
-        } else {
-            sawLeftMouseDown = false // fresh session: a drag in flight when we show has no down we saw
         }
         if let eventTap {
             CGEvent.tapEnable(tap: eventTap, enable: enabled)
@@ -73,33 +66,12 @@ class CursorEvents {
     }
 
     private static func handleLeftMouseDown(_ cgEvent: CGEvent) -> Unmanaged<CGEvent>? {
-        sawLeftMouseDown = true // this gesture's down is ours; its up is a click, not a foreign drop
-        if TilesView.hasMarkedText() || ContextMenuEvents.isMenuOpen { return Unmanaged.passUnretained(cgEvent) }
-        if isPointerInsideSearchField() {
-            mouseDownInsideSearchField = true
-            return Unmanaged.passUnretained(cgEvent)
-        }
-        mouseDownInsideSearchField = false
         guard isPointerInsideUi() else { return nil }
         mouseDownTarget = (findButtonUnderPointer() ?? findTileViewUnderPointer()) as AnyObject?
         return nil
     }
 
     private static func handleLeftMouseUp(_ cgEvent: CGEvent) -> Unmanaged<CGEvent>? {
-        let sawDown = sawLeftMouseDown
-        sawLeftMouseDown = false
-        // a drag from another app ends with a leftMouseUp whose matching down we never saw (it happened
-        // before the switcher showed). Don't swallow it, or the drop never concludes and the file stays
-        // stuck on the cursor — whether released on a tile, the padding around the tiles, or outside the
-        // panel. Let AppKit / the source app conclude the drop (see DragAndDropResolver).
-        if DragAndDropResolver.passesThroughMouseUp(mouseDownWasSeen: sawDown) {
-            return Unmanaged.passUnretained(cgEvent)
-        }
-        if TilesView.hasMarkedText() || ContextMenuEvents.isMenuOpen { return Unmanaged.passUnretained(cgEvent) }
-        if mouseDownInsideSearchField || isPointerInsideSearchField() {
-            mouseDownInsideSearchField = false
-            return Unmanaged.passUnretained(cgEvent)
-        }
         guard isPointerInsideUi() else {
             if mouseDownTarget == nil { App.hideUi() }
             mouseDownTarget = nil
@@ -119,22 +91,21 @@ class CursorEvents {
     }
 
     private static func handleRightMouseDown(_ cgEvent: CGEvent) -> Unmanaged<CGEvent>? {
-        if ContextMenuEvents.isMenuOpen || isPointerInsideUi() { return Unmanaged.passUnretained(cgEvent) }
+        if isPointerInsideUi() { return Unmanaged.passUnretained(cgEvent) }
         return nil
     }
 
     private static func handleRightMouseUp(_ cgEvent: CGEvent) -> Unmanaged<CGEvent>? {
-        if ContextMenuEvents.isMenuOpen || isPointerInsideUi() { return Unmanaged.passUnretained(cgEvent) }
+        if isPointerInsideUi() { return Unmanaged.passUnretained(cgEvent) }
         return nil
     }
 
     private static func handleOtherMouseDown(_ cgEvent: CGEvent) -> Unmanaged<CGEvent>? {
-        if ContextMenuEvents.isMenuOpen || isPointerInsideUi() { return Unmanaged.passUnretained(cgEvent) }
+        if isPointerInsideUi() { return Unmanaged.passUnretained(cgEvent) }
         return nil
     }
 
     private static func handleOtherMouseUp(_ cgEvent: CGEvent) -> Unmanaged<CGEvent>? {
-        if ContextMenuEvents.isMenuOpen { return Unmanaged.passUnretained(cgEvent) }
         if isPointerInsideUi(),
            cgEvent.getIntegerValueField(.mouseEventButtonNumber) == 2,
            let target = findTileViewUnderPointer(),
@@ -167,13 +138,6 @@ class CursorEvents {
 
     private static func isPointerInsideUi() -> Bool {
         TilesPanel.shared.contentLayoutRect.contains(pointerLocationInWindow())
-    }
-
-    private static func isPointerInsideSearchField() -> Bool {
-        let searchField = TilesView.searchField
-        if searchField.isHidden { return false }
-        let point = searchField.convert(pointerLocationInWindow(), from: nil)
-        return searchField.bounds.contains(point)
     }
 
     private static func pointerInOverlay() -> (TileOverView, NSPoint) {

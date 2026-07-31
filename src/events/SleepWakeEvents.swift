@@ -16,8 +16,6 @@ class SleepWakeEvents {
     }
 
     static func reEnableAllTaps() {
-        TrackpadEvents.reEnableTapIfNeeded()
-        ScrollwheelEvents.reEnableTapIfNeeded()
         KeyboardEvents.reEnableTapIfNeeded()
         CursorEvents.reEnableTapIfNeeded()
     }

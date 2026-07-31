@@ -50,19 +50,8 @@ class TilesPanel: NSPanel {
 
 
     private func repositionOrFreeze() {
-        let size = frame.size
-        guard TilesView.isSearchModeOn else {
-            NSScreen.preferred.repositionPanel(self)
-            resetFrozenPosition()
-            return
-        }
-        if size.height > highWaterHeight {
-            NSScreen.preferred.repositionPanel(self)
-            highWaterHeight = size.height
-            frozenTopCenter = NSPoint(x: frame.midX, y: frame.maxY)
-        } else if let topCenter = frozenTopCenter {
-            setFrameOrigin(NSPoint(x: topCenter.x - size.width * 0.5, y: topCenter.y - size.height))
-        }
+        NSScreen.preferred.repositionPanel(self)
+        resetFrozenPosition()
     }
 
     func resetFrozenPosition() {
@@ -91,7 +80,6 @@ class TilesPanel: NSPanel {
         // and Appearance are in their final state.
         alphaValue = 1
         makeKeyAndOrderFront(nil)
-        ContextMenuEvents.toggle(true)
         CursorEvents.toggle(true)
         DispatchQueue.main.async { TilesView.scrollView.flashScrollers() }
     }
@@ -155,9 +143,6 @@ extension TilesPanel: NSWindowDelegate {
         // this avoids command+q from quitting AltTab itself, or command+p from printing
         DispatchQueue.main.async {
             MainMenu.toggle(false)
-            if TilesView.isSearchEditing {
-                MainMenu.toggleEditMenu(true)
-            }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
             Applications.manuallyRefreshAllWindows()

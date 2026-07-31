@@ -75,21 +75,13 @@ class LabelAndControl: NSObject {
                                       _ macroPreferences: [ImageMacroPreference],
                                       extraAction: ActionClosure? = nil,
                                       buttonSpacing: CGFloat = 15,
-                                      proGatedIndices: Set<Int> = []) -> NSStackView {
-        SettingsSearchIndex.registerStrings(macroPreferences.map { $0.localizedString })
+                                      ) -> NSStackView {
         let buttonViews = macroPreferences.enumerated().map { (index, preference) -> ImageTextButtonView in
             let state: NSControl.StateValue = CachedUserDefaults.intFromMacroPref(rawName, macroPreferences) == index ? .on : .off
             let buttonView = ImageTextButtonView(title: preference.localizedString, rawName: rawName, image: preference.image, state: state)
             buttonView.onClick = { [weak buttonView] control in
                 guard let buttonView else { return }
                 let siblings = (buttonView.superview as? NSStackView)?.arrangedSubviews.compactMap { $0 as? ImageTextButtonView } ?? []
-                if LicenseManager.shared.isProLocked && proGatedIndices.contains(index) {
-                    // Snap the radio group back to the stored value and bounce to the upgrade tab.
-                    let storedIndex = CachedUserDefaults.intFromMacroPref(rawName, macroPreferences)
-                    siblings.enumerated().forEach { (i, b) in b.state = (i == storedIndex) ? .on : .off }
-                    UpgradeTab.navigateToUpgradeTab()
-                    return
-                }
                 siblings.enumerated().forEach { (i, otherButtonView) in
                     if otherButtonView != buttonView {
                         otherButtonView.state = i == index ? .on : .off
@@ -159,8 +151,6 @@ class LabelAndControl: NSObject {
         }.filter {
             !$0.isEmpty
         }))
-        SettingsSearchIndex.registerStrings(view.searchableStrings)
-        SettingsSearchIndex.registerTarget(SettingsWindow.highlightTarget(view))
         view.onClick = onClick
         view.onMouseEntered = onMouseEntered
         view.onMouseExited = onMouseExited
@@ -220,8 +210,6 @@ class LabelAndControl: NSObject {
 
     static func makeDropdown(_ rawName: String, _ macroPreferences: [MacroPreference], extraAction: ActionClosure? = nil) -> NSPopUpButton {
         let dropdown = dropdown_(rawName, macroPreferences)
-        SettingsSearchIndex.registerStrings(macroPreferences.map { $0.localizedString })
-        SettingsSearchIndex.registerTarget(SettingsWindow.highlightTarget(dropdown))
         return setupControl(dropdown, rawName, extraAction: extraAction) as! NSPopUpButton
     }
 
@@ -247,7 +235,6 @@ class LabelAndControl: NSObject {
             let button = NSButton(radioButtonWithTitle: $0.localizedString, target: nil, action: nil)
             button.translatesAutoresizingMaskIntoConstraints = false
             button.state = CachedUserDefaults.intFromMacroPref(rawName, macroPreferences) == i ? .on : .off
-            SettingsSearchIndex.registerString($0.localizedString)
             _ = setupControl(button, rawName, String(i), extraAction: extraAction)
             i += 1
             return button
@@ -259,8 +246,6 @@ class LabelAndControl: NSObject {
             $0.localizedString
         }, trackingMode: .selectOne, target: nil, action: nil)
         button.translatesAutoresizingMaskIntoConstraints = false
-        SettingsSearchIndex.registerStrings(macroPreferences.map { $0.localizedString })
-        SettingsSearchIndex.registerTarget(SettingsWindow.highlightTarget(button))
         applySystemSelectedSegmentStyle(button)
         for (i, preference) in macroPreferences.enumerated() {
             if segmentWidth > 0 {
@@ -382,8 +367,6 @@ class LabelAndControl: NSObject {
         if shouldFit {
             label.fit()
         }
-        SettingsSearchIndex.registerString(labelText)
-        SettingsSearchIndex.registerTarget(SettingsSearchHighlight.highlightTarget(label))
         return label
     }
 
@@ -391,8 +374,6 @@ class LabelAndControl: NSObject {
         let suffix = NSTextField(labelWithString: text)
         suffix.textColor = .gray
         suffix.identifier = NSUserInterfaceItemIdentifier(controlName + ControlIdentifierDiscriminator.SUFFIX.rawValue)
-        SettingsSearchIndex.registerString(text)
-        SettingsSearchIndex.registerTarget(SettingsSearchHighlight.highlightTarget(suffix))
         return suffix
     }
 
