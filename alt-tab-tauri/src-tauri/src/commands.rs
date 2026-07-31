@@ -1,8 +1,39 @@
 use crate::macos::accessibility;
+use crate::models::preferences::PreferencesStore;
 use crate::models::{AppState as ModelAppState, WindowState};
 use serde::Serialize;
+use std::fs;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{Emitter, Manager, State};
+
+fn prefs_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.join("preferences.json"))
+}
+
+#[tauri::command]
+pub fn get_preferences(app: tauri::AppHandle) -> PreferencesStore {
+    let path = match prefs_path(&app) {
+        Ok(p) => p,
+        Err(_) => return PreferencesStore::default(),
+    };
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|data| serde_json::from_str(&data).ok())
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+pub fn update_preferences(app: tauri::AppHandle, prefs: PreferencesStore) -> Result<(), String> {
+    let path = prefs_path(&app)?;
+    let json = serde_json::to_string_pretty(&prefs).map_err(|e| e.to_string())?;
+    fs::write(&path, json).map_err(|e| e.to_string())?;
+    crate::macos::global_shortcut::apply_shortcuts(&prefs.shortcuts);
+    log::info!("Preferences updated: {:?}", prefs.shortcuts);
+    Ok(())
+}
 
 #[derive(Debug, Serialize)]
 pub struct WindowEntry {
@@ -158,6 +189,31 @@ pub fn hide_switcher(app_handle: tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app_handle.get_webview_window("switcher") {
         window.hide().map_err(|e: tauri::Error| e.to_string())?;
     }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn show_settings(app_handle: tauri::AppHandle) -> Result<(), String> {
+    let window = app_handle.get_webview_window("settings").or_else(|| {
+        tauri::WebviewWindowBuilder::new(
+            &app_handle,
+            "settings",
+            tauri::WebviewUrl::App("index.html".into()),
+        )
+        .title("AltTab Settings")
+        .inner_size(480.0, 360.0)
+        .resizable(false)
+        .center()
+        .build()
+        .ok()
+    });
+
+    let Some(window) = window else {
+        return Err("failed to create settings window".into());
+    };
+
+    window.show().map_err(|e: tauri::Error| e.to_string())?;
+    window.set_focus().map_err(|e: tauri::Error| e.to_string())?;
     Ok(())
 }
 

@@ -34,15 +34,20 @@ pub fn run() {
             commands::focus_window,
             commands::show_switcher,
             commands::hide_switcher,
+            commands::show_settings,
             commands::check_accessibility_permission,
             commands::cycle_selection,
             commands::get_window_thumbnail,
+            commands::get_preferences,
+            commands::update_preferences,
         ])
         .setup(|app| {
             log::info!("AltTab Tauri app starting…");
             macos::tray::setup(app)?;
 
-            // Start global shortcut listener (Option+Tab)
+            // Apply persisted shortcut configuration, then start the global shortcut tap
+            let prefs = commands::get_preferences(app.handle().clone());
+            macos::global_shortcut::apply_shortcuts(&prefs.shortcuts);
             let handle = app.handle().clone();
             macos::global_shortcut::start(handle);
 

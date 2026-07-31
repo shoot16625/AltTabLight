@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import SwitcherPanel from "./components/SwitcherPanel";
+import SettingsWindow from "./components/SettingsWindow";
 
 export interface WindowEntry {
   id: string;
@@ -27,12 +28,17 @@ async function cycle(direction: number, selectedIndex: number): Promise<number> 
 }
 
 function App() {
+  const [windowLabel, setWindowLabel] = useState<string>("switcher");
   const [hasAccessibility, setHasAccessibility] = useState<boolean>(true);
   const [switcherState, setSwitcherState] = useState<SwitcherState>({
     windows: [],
     selected_index: 0,
     is_active: false,
   });
+
+  useEffect(() => {
+    setWindowLabel(getCurrentWindow().label);
+  }, []);
 
   const hideSwitcher = useCallback(async () => {
     setSwitcherState(prev => ({ ...prev, is_active: false }));
@@ -151,6 +157,15 @@ function App() {
       .then((granted) => setHasAccessibility(granted as boolean))
       .catch(() => setHasAccessibility(false));
   }, []);
+
+  // Settings window: shortcut customization
+  if (windowLabel === "settings") {
+    return (
+      <div className="app-root">
+        <SettingsWindow />
+      </div>
+    );
+  }
 
   return (
     <div className="app-root">
