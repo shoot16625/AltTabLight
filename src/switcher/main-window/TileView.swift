@@ -273,7 +273,12 @@ class TileView: FlippedView {
                 thumbnail.updateContents(screenshot, thumbnailSize)
             } else {
                 // if no thumbnail, show appIcon instead
-                let thumbnailSize = TileView.thumbnailSize(element.icon?.size(), true)
+                // use the same sizing formula as Window.refreshThumbnail (window aspect ratio),
+                // so the tile keeps its size when the preview screenshot lands; sizing from the
+                // square app icon would stretch tiles differently and relayout the panel
+                let thumbnailSize = element.isWindowlessApp || element.size == nil
+                    ? TileView.thumbnailSize(element.icon?.size(), true)
+                    : TileView.thumbnailSize(element.size, false)
                 thumbnail.updateContents(.cgImage(element.icon), thumbnailSize)
             }
         }
