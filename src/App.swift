@@ -106,7 +106,6 @@ class App: NSApplication {
         ObjCExceptionCatcher.catching { restored = window.setFrameUsingName(window.frameAutosaveName) }
         if !restored {
             NSScreen.preferred.repositionPanel(window)
-            window.center()
         }
     }
 
@@ -132,7 +131,6 @@ class App: NSApplication {
         showSettingsWindow()
         if let window = SettingsWindow.shared {
             NSScreen.preferred.repositionPanel(window)
-            window.center()
         }
         Preferences.markSettingsWindowShownOnFirstLaunch()
     }

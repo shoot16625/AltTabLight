@@ -12,7 +12,7 @@ class SettingsWindow: NSWindow {
     override var canBecomeKey: Bool { Self.canBecomeKey_ }
 
     private static let windowHeight = CGFloat(640)
-    private static let windowWidth: CGFloat = contentWidth + 2 * sectionContentHorizontalMargin + 30
+    private static let windowWidth: CGFloat = contentWidth + 2 * sectionContentHorizontalMargin
 
     convenience init() {
         self.init(contentRect: NSRect(x: 0, y: 0, width: Self.windowWidth, height: Self.windowHeight),
@@ -21,9 +21,21 @@ class SettingsWindow: NSWindow {
         minSize = NSSize(width: Self.windowWidth, height: 400)
         maxSize = NSSize(width: Self.windowWidth, height: CGFloat.greatestFiniteMagnitude)
         setupWindow()
-        setupView()
-        if !setFrameAutosaveNameSafely("SettingsWindow") {
-            center()
+        let sectionView = setupView()
+        // Fit the window to its content: the shortcuts table is the only section, so a taller
+        // window just adds empty space below it (content is top-aligned inside the scroll view).
+        sectionView.layoutSubtreeIfNeeded()
+        let fittedHeight = min(max(sectionView.fittingSize.height + 24, 400), 720)
+        setContentSize(NSSize(width: Self.windowWidth, height: fittedHeight))
+        // Restore the saved frame (position + size). `setFrameAutosaveName` persists the current
+        // frame, so this must run after the height fit. A saved frame from before the height fit
+        // (or any other height mismatch) would anchor the top edge and leave the window hanging
+        // off-center — fall back to centering in that case.
+        let hasSavedFrame = setFrameAutosaveNameSafely("SettingsWindow")
+        if !hasSavedFrame || abs(frame.height - fittedHeight) > 40 {
+            // `NSWindow.center()` misbehaves on recent macOS (offsets the window from screen
+            // center); center manually within the visible frame instead.
+            NSScreen.preferred.repositionPanel(self)
         }
         Self.shared = self
     }
@@ -37,7 +49,7 @@ class SettingsWindow: NSWindow {
         isMovableByWindowBackground = true
     }
 
-    private func setupView() {
+    private func setupView() -> NSView {
         let scrollView = NSScrollView()
         scrollView.drawsBackground = false
         scrollView.hasVerticalScroller = true
@@ -61,11 +73,11 @@ class SettingsWindow: NSWindow {
             documentView.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
             documentView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
             documentView.bottomAnchor.constraint(equalTo: scrollView.contentView.bottomAnchor),
-            sectionView.leadingAnchor.constraint(equalTo: documentView.leadingAnchor, constant: 10),
-            sectionView.trailingAnchor.constraint(lessThanOrEqualTo: documentView.trailingAnchor, constant: -10),
-            sectionView.topAnchor.constraint(equalTo: documentView.topAnchor, constant: 10),
-            sectionView.bottomAnchor.constraint(equalTo: documentView.bottomAnchor, constant: -10),
+            sectionView.centerXAnchor.constraint(equalTo: documentView.centerXAnchor),
+            sectionView.topAnchor.constraint(equalTo: documentView.topAnchor, constant: 12),
+            sectionView.bottomAnchor.constraint(lessThanOrEqualTo: documentView.bottomAnchor, constant: -12),
         ])
+        return sectionView
     }
 }
 
