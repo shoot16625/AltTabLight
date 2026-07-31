@@ -47,21 +47,6 @@ class TableGroupSetView: NSStackView {
                 }
                 continuousTableGroups.append(view)
                 lastViewWasTableGroup = true
-            } else if view is IllustratedImageThemeView {
-                lastViewWasTableGroup = false
-                addContinuousTableGroupsToSetViews(&continuousTableGroups,
-                                                   views: &verticalViews,
-                                                   tableGroupSpacing: tableGroupSpacing,
-                                                   titleTableGroupSpacing: titleTableGroupSpacing,
-                                                   horizontalPadding: padding,
-                                                   topPadding: resolvedTopPadding)
-                addContinuousOthersToSetViews(&continuousOthers,
-                                              views: &verticalViews,
-                                              othersSpacing: othersSpacing,
-                                              horizontalPadding: padding,
-                                              topPadding: resolvedTopPadding,
-                                              alignment: othersAlignment)
-                addToolsViewToSetViews([view], views: &verticalViews, horizontalPadding: padding, topPadding: resolvedTopPadding, alignment: toolsAlignment)
             } else {
                 if lastViewWasTableGroup {
                     // Only reset table group views if we are switching from TableGroupView to non-TableGroupView
@@ -452,8 +437,6 @@ class TableGroupView: ClickHoverStackView {
         leftLabel.alignment = .left
         leftLabel.lineBreakMode = .byTruncatingTail
         leftLabel.maximumNumberOfLines = 1
-        SettingsSearchIndex.registerString(leftText)
-        SettingsSearchIndex.registerTarget(SettingsSearchHighlight.highlightTarget(leftLabel))
         return leftLabel
     }
 

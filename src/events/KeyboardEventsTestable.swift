@@ -11,13 +11,6 @@ class KeyboardEventsTestable {
 
 @discardableResult
 func handleKeyboardEvent(_ globalId: Int?, _ shortcutState: ShortcutState?, _ keyCode: UInt32?, _ modifiers: NSEvent.ModifierFlags?, _ isARepeat: Bool, _ event: NSEvent? = nil) -> Bool {
-    if let event, shouldAbsorbSearchEditingKeyDown(event) {
-        switch TilesView.handleSearchEditingKeyDown(event) {
-        case .handled: return true
-        case .passToField: return false
-        case .passToShortcuts: break
-        }
-    }
     logKeyboardEvent(globalId, shortcutState, keyCode, modifiers, isARepeat)
     let someShortcutTriggered = triggerMatchingShortcuts(globalId, shortcutState, keyCode, modifiers, isARepeat)
     return someShortcutTriggered
@@ -37,13 +30,6 @@ private func logKeyboardEvent(_ globalId: Int?, _ shortcutState: ShortcutState?,
         let keyCodeAsString = keyCode.flatMap { SymbolicKeyCodeTransformer.shared.transformedValue(NSNumber(value: $0)) }
         return "keys:\(modifiersAsString ?? "")\(keyCodeAsString ?? "") isARepeat:\(isARepeat)"
     }
-}
-
-private func shouldAbsorbSearchEditingKeyDown(_ event: NSEvent?) -> Bool {
-    guard let event, event.type == .keyDown, SwitcherSession.isActive, TilesPanel.shared.isKeyWindow, TilesView.isSearchEditing else {
-        return false
-    }
-    return true
 }
 
 private func triggerMatchingShortcuts(_ globalId: Int?, _ shortcutState: ShortcutState?, _ keyCode: UInt32?, _ modifiers: NSEvent.ModifierFlags?, _ isARepeat: Bool) -> Bool {

@@ -2,20 +2,12 @@ import Cocoa
 import Carbon.HIToolbox.Events
 import ShortcutRecorder
 
-enum SearchKeyResult {
-    case handled
-    case passToField
-    case passToShortcuts
-}
-
 class TilesView {
     static var scrollView: ScrollView!
     static var contentView: EffectView!
     static var currentEffectViewKind: EffectViewKind?
     private static var cachedEffectViews: [EffectViewKind: EffectView] = [:]
-    static var searchField = NSSearchField(frame: NSRect(x: 0, y: 0, width: 320, height: 30))
     static var noWindowLabel = NSTextField(labelWithString: NSLocalizedString("No Window", comment: ""))
-    private(set) static var searchMode: SearchMode = .off
     static var rows = [[TileView]]()
     private static var lastRowSignature = [Int]()
     static var recycledViews = [TileView]()
@@ -28,7 +20,6 @@ class TilesView {
 
     static func initialize() {
         guard !initialized else { return }
-        configureSearchField()
         configureNoWindowLabel()
         updateBackgroundView()
         // TODO: think about this optimization more
@@ -37,208 +28,11 @@ class TilesView {
         initialized = true
     }
 
-    static var isSearchModeOn: Bool { searchMode != .off }
-    static var isSearchEditing: Bool { searchMode == .editing }
-    static var isSearchLocked: Bool { searchMode == .locked }
-
-    static func startSearchSession(_ startInSearchMode: Bool) {
-        searchField.stringValue = ""
-        Windows.updateSearchQuery("")
-        searchMode = SearchModeResolver.startMode(startInSearch: startInSearchMode)
-        updateSearchFieldEditability()
-    }
-
-    static func endSearchSession() {
-        searchField.stringValue = ""
-        Windows.updateSearchQuery("")
-        TilesPanel.shared.resetFrozenPosition()
-        searchMode = .off
-        updateSearchFieldEditability()
-    }
-
-    static func toggleSearchModeFromShortcut() {
-        switch SearchModeResolver.toggle(mode: searchMode) {
-            case .enterEditing: enableSearchEditing()
-            case .disable: disableSearchMode()
-        }
-    }
-
-    static func disableSearchMode() {
-        guard SearchModeResolver.disable(mode: searchMode) == .exitToOff else { return }
-        TilesPanel.shared.resetFrozenPosition()
-        searchMode = .off
-        updateSearchFieldEditability()
-        searchField.stringValue = ""
-        clearHover()
-        Windows.updateSearchQuery("")
-        App.refreshUi(true)
-        focusSelectedTileIfPossible()
-    }
-
-    static func lockSearchMode() {
-        switch SearchModeResolver.lock(mode: searchMode, canLockSearch: ProFeature.lockSearchInSwitcher.attemptUse()) {
-            case .lockResults:
-                searchMode = .locked
-                updateSearchFieldEditability()
-                focusSelectedTileIfPossible()
-            case .unlockToEditing:
-                enableSearchEditing()
-            default:
-                return
-        }
-    }
-
-    static func enableSearchEditing() {
-        switch SearchModeResolver.enableEditing(mode: searchMode, canSearch: ProFeature.searchInSwitcher.attemptUse()) {
-            case .placeCaretOnly:
-                placeSearchCaretAtEnd()
-            case .enterEditing(let refreshUi):
-                searchMode = .editing
-                updateSearchFieldEditability()
-                SwitcherSession.current?.forceDoNothingOnRelease = true
-                clearHover()
-                stopKeyRepeatTimers()
-                if refreshUi {
-                    App.refreshUi(true)
-                }
-                TilesPanel.shared.makeFirstResponder(searchField)
-                placeSearchCaretAtEnd()
-            default:
-                return
-        }
-    }
-
-    static func handleSearchEditingKeyDown(_ event: NSEvent) -> SearchKeyResult {
-        let decision = SearchModeResolver.routeKey(
-            hasMarkedText: hasMarkedText(),
-            isMenuOpen: ContextMenuEvents.isMenuOpen,
-            arrow: arrowCycleDirection(event.keyCode),
-            isTab: Int(event.keyCode) == kVK_Tab,
-            matchesCancel: matchesShortcut(event, "cancelShortcut"),
-            matchesLockSearch: matchesShortcut(event, "lockSearchShortcut"),
-            matchesFocus: matchesShortcut(event, "focusWindowShortcut"))
-        switch decision {
-            case .cycleSelection(let direction):
-                App.cycleSelection(cycleToDirection(direction))
-                return .handled
-            case .handled: return .handled
-            case .passToShortcuts: return .passToShortcuts
-            case .passToField: return .passToField
-        }
-    }
-
-    private static func arrowCycleDirection(_ keyCode: UInt16) -> CycleDirection? {
-        switch Int(keyCode) {
-            case kVK_LeftArrow: return .left
-            case kVK_RightArrow: return .right
-            case kVK_UpArrow: return .up
-            case kVK_DownArrow: return .down
-            default: return nil
-        }
-    }
-
-    private static func cycleToDirection(_ direction: CycleDirection) -> Direction {
-        switch direction {
-            case .left: return .left
-            case .right: return .right
-            case .up: return .up
-            case .down: return .down
-        }
-    }
-
     private static func configureNoWindowLabel() {
         noWindowLabel.textColor = .secondaryLabelColor
         noWindowLabel.font = .systemFont(ofSize: 13)
         noWindowLabel.alignment = .center
         noWindowLabel.isHidden = true
-    }
-
-    private static func configureSearchField() {
-        searchField.placeholderString = NSLocalizedString("Search", comment: "")
-        searchField.sendsSearchStringImmediately = true
-        searchField.sendsWholeSearchString = true
-        searchField.bezelStyle = .roundedBezel
-        if #available(macOS 26.0, *) {
-            searchField.controlSize = .extraLarge
-        } else if #available(macOS 13.0, *) {
-            searchField.controlSize = .large
-        } else {
-            searchField.controlSize = .regular
-        }
-        searchField.usesSingleLineMode = true
-        searchField.target = Self.self
-        searchField.action = #selector(Self.searchFieldChanged(_:))
-        NotificationCenter.default.addObserver(forName: NSControl.textDidChangeNotification, object: searchField, queue: .main) { _ in
-            updateSearchQuery(searchField.stringValue)
-        }
-        updateSearchFieldEditability()
-    }
-
-    @objc private static func searchFieldChanged(_ sender: NSSearchField) {
-        updateSearchQuery(sender.stringValue)
-    }
-
-    private static func updateSearchQuery(_ query: String) {
-        if (SwitcherSession.current?.searchQuery ?? "") == query { return }
-        if !query.isEmpty { UsageStats.recordSearchIfFirst() }
-        clearHover()
-        Windows.updateSearchQuery(query)
-        stopKeyRepeatTimers()
-        App.refreshUi(true)
-    }
-
-    private static func clearHover() {
-        guard let session = SwitcherSession.current, let oldHoveredWindowIndex = session.hoveredIndex else { return }
-        session.hoveredIndex = nil
-        TilesView.highlight(oldHoveredWindowIndex)
-        TilesView.highlight(session.selectedIndex)
-    }
-
-    private static func stopKeyRepeatTimers() {
-        let shortcutIndex = SwitcherSession.current?.shortcutIndex ?? 0
-        KeyRepeatTimer.stopTimerForRepeatingKey(Preferences.indexToName("nextWindowShortcut", shortcutIndex))
-        KeyRepeatTimer.stopTimerForRepeatingKey("previousWindowShortcut")
-    }
-
-    private static func focusSelectedTileIfPossible() {
-        let index = SwitcherSession.current?.selectedIndex ?? 0
-        guard index >= 0, index < TilesView.recycledViews.count else { return }
-        let tile = TilesView.recycledViews[index]
-        guard tile.window_ != nil, tile.window != nil else { return }
-        TilesPanel.shared.makeFirstResponder(tile)
-    }
-
-    private static func placeSearchCaretAtEnd() {
-        guard searchMode == .editing else { return }
-        if TilesPanel.shared.firstResponder !== searchField.currentEditor() {
-            TilesPanel.shared.makeFirstResponder(searchField)
-        }
-        guard let editor = searchField.currentEditor() else { return }
-        let end = searchField.stringValue.utf16.count
-        editor.selectedRange = NSRange(location: end, length: 0)
-    }
-
-    static func hasMarkedText() -> Bool {
-        (searchField.currentEditor() as? NSTextView)?.hasMarkedText() == true
-    }
-
-    private static func matchesShortcut(_ event: NSEvent, _ shortcutId: String) -> Bool {
-        guard let shortcut = ControlsTab.shortcuts[shortcutId]?.shortcut else { return false }
-        if shortcut.keyCode == .none || shortcut.carbonKeyCode != UInt32(event.keyCode) { return false }
-        let shortcutIndex = SwitcherSession.current?.shortcutIndex ?? 0
-        let holdModifiers = ControlsTab.shortcuts[Preferences.indexToName("holdShortcut", shortcutIndex)]?.shortcut.carbonModifierFlags.cleaned() ?? 0
-        let eventModifiers = cocoaToCarbonFlags(event.modifierFlags).cleaned()
-        let shortcutModifiers = shortcut.carbonModifierFlags.cleaned()
-        return eventModifiers == shortcutModifiers || eventModifiers == (shortcutModifiers | holdModifiers)
-    }
-
-    private static func updateSearchFieldEditability() {
-        let editable = SearchModeResolver.isFieldEditable(searchMode)
-        searchField.isEditable = editable
-        searchField.isSelectable = editable
-        if SwitcherSession.isActive {
-            MainMenu.toggleEditMenu(editable)
-        }
     }
 
     static func updateCachedSizes() {
@@ -259,11 +53,6 @@ class TilesView {
         currentEffectViewKind = kind
         scrollView?.removeFromSuperview()
         scrollView = ScrollView()
-        if searchMode != .off {
-            contentView.addSubview(searchField)
-        } else {
-            searchField.removeFromSuperview()
-        }
         contentView.addSubview(scrollView)
         contentView.addSubview(noWindowLabel)
     }
@@ -274,9 +63,6 @@ class TilesView {
         guard desired != currentEffectViewKind else { return }
         let newView = cachedEffectView(for: desired)
         currentEffectViewKind = desired
-        if searchField.superview === contentView {
-            newView.addSubview(searchField)
-        }
         newView.addSubview(scrollView)
         newView.addSubview(noWindowLabel)
         contentView = newView
@@ -317,7 +103,6 @@ class TilesView {
         thumbnailOverView.scrollView = scrollView
         lastRowSignature.removeAll()
         TileView.invalidateTitleAttributesCache()
-        cachedSearchBarHeight = nil
         Self.updateCachedSizes()
     }
 
@@ -427,8 +212,7 @@ class TilesView {
     }
 
     private static func resolveAutoSize(_ widthMax: CGFloat) {
-        let searchReservedHeight: CGFloat = searchMode == .off ? 0 : searchBarHeight() + 10
-        let heightMax = max(0, TilesPanel.maxThumbnailsHeight() - searchReservedHeight)
+        let heightMax = max(0, TilesPanel.maxThumbnailsHeight())
         for size in [AppearanceSizePreference.large, .medium, .small] {
             Appearance.applySize(size)
             Self.updateCachedSizes()
@@ -547,17 +331,13 @@ class TilesView {
     }
 
     private static func layoutParentViews(_ maxX: CGFloat, _ widthMax: CGFloat, _ maxY: CGFloat, _ labelHeight: CGFloat) {
-        let searchBarHeight = searchBarHeight()
-        let searchBottomPadding = CGFloat(10)
-        let searchReservedHeight = searchMode == .off ? 0 : searchBarHeight + searchBottomPadding
-        let heightMax = max(0, TilesPanel.maxThumbnailsHeight() - searchReservedHeight)
-        let minSearchWidth = min(widthMax, 320)
+        let heightMax = max(0, TilesPanel.maxThumbnailsHeight())
         let minWidth = min(widthMax, 320)
-        TilesView.thumbnailsWidth = max(min(maxX, widthMax), searchMode == .off ? (maxX == 0 ? minWidth : 0) : minWidth)
+        TilesView.thumbnailsWidth = max(min(maxX, widthMax), maxX == 0 ? minWidth : 0)
         TilesView.thumbnailsHeight = min(maxY, heightMax)
         let appIconsBottomViewportPadding = appIconsBottomViewportPadding(maxY, heightMax, labelHeight)
         let frameWidth = TilesView.thumbnailsWidth + Appearance.windowPadding * 2
-        var frameHeight = TilesView.thumbnailsHeight + Appearance.windowPadding * 2 + searchReservedHeight
+        var frameHeight = TilesView.thumbnailsHeight + Appearance.windowPadding * 2
         let originX = Appearance.windowPadding
         var originY = Appearance.windowPadding
         if Preferences.effectiveAppearanceStyle(SwitcherSession.activeShortcutIndex) == .appIcons {
@@ -570,18 +350,6 @@ class TilesView {
         scrollView.frame.size = NSSize(width: TilesView.thumbnailsWidth, height: scrollHeight)
         scrollView.frame.origin = CGPoint(x: originX, y: originY + appIconsBottomViewportPadding * 2)
         scrollView.contentView.frame.size = scrollView.frame.size
-        if searchMode != .off {
-            if searchField.superview !== contentView {
-                contentView.addSubview(searchField)
-            }
-            let searchWidth = minSearchWidth
-            searchField.frame.size = NSSize(width: searchWidth, height: searchBarHeight)
-            let searchX = originX + (TilesView.thumbnailsWidth - searchWidth) * 0.5
-            searchField.frame.origin = CGPoint(x: searchX, y: frameHeight - Appearance.windowPadding - searchBarHeight)
-            searchField.layoutSubtreeIfNeeded()
-        } else if searchField.superview != nil {
-            searchField.removeFromSuperview()
-        }
         if App.shared.userInterfaceLayoutDirection == .rightToLeft {
             let croppedWidth = max(0, TilesView.thumbnailsWidth - maxX)
             scrollView.documentView!.subviews.forEach { $0.frame.origin.x -= croppedWidth }
@@ -598,16 +366,6 @@ class TilesView {
             let labelY = scrollView.frame.origin.y + (scrollView.frame.height - noWindowLabel.frame.height) * 0.5
             noWindowLabel.frame.origin = CGPoint(x: labelX, y: labelY)
         }
-    }
-
-    private static var cachedSearchBarHeight: CGFloat?
-
-    private static func searchBarHeight() -> CGFloat {
-        if let cached = cachedSearchBarHeight { return cached }
-        let fitting = searchField.fittingSize.height
-        let height = fitting > 0 ? ceil(fitting) : ceil(searchField.cell?.cellSize.height ?? 30)
-        cachedSearchBarHeight = height
-        return height
     }
 
     private static func appIconsBottomViewportPadding(_ maxY: CGFloat, _ heightMax: CGFloat, _ labelHeight: CGFloat) -> CGFloat {
@@ -686,8 +444,6 @@ class TilesView {
         var iconHeight = CGFloat(0)
         var comfortableReadabilityWidth: CGFloat?
     }
-
-    
 }
 
 class ScrollView: NSScrollView {
@@ -733,120 +489,15 @@ class ScrollView: NSScrollView {
 }
 
 class TilesDocumentView: FlippedView {
-    private static let dragAndDropTimerDelay = TimeInterval(2)
-    private static let dragAndDropTimerResetDistance = CGFloat(5)
-
-    private weak var dragTarget: TileView?
-    private var lastDragLocation: NSPoint?
-    private var timerResetLocation: NSPoint?
-    private var dragAndDropTimer: Timer?
-
     @objc func _windowChangedKeyState() {}
     @objc func _layoutSubtreeWithOldSize(_ oldSize: NSSize) {}
 
-    override func wantsPeriodicDraggingUpdates() -> Bool { false }
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        // we only handle URLs (i.e. not text, image, or other draggable things)
-        registerForDraggedTypes([NSPasteboard.PasteboardType(kUTTypeURL as String)])
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("Class only supports programmatic initialization")
-    }
-
-    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        let location = sender.draggingLocation
-        lastDragLocation = location
-        return dragOperation(location)
-    }
-
-    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        let location = sender.draggingLocation
-        if location != lastDragLocation { lastDragLocation = location }
-        return dragOperation(location)
-    }
-
-    override func draggingExited(_ sender: NSDraggingInfo?) {
-        resetDraggingState(true)
-    }
-
-    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        defer { resetDraggingState(false) }
-        let target = targetView(sender.draggingLocation) ?? dragTarget
-        let appUrl = target?.window_?.application.bundleURL
-        let urls = (sender.draggingPasteboard.readObjects(forClasses: [NSURL.self]) as? [URL]) ?? []
-        guard DragAndDropResolver.canDrop(hasTarget: target != nil, hasWindow: target?.window_ != nil, hasAppBundleURL: appUrl != nil, urlCount: urls.count),
-              let appUrl else { return false }
-        let open = try? NSWorkspace.shared.open(urls, withApplicationAt: appUrl, options: [], configuration: [:])
-        if open != nil { App.hideUi() }
-        return open != nil
-    }
-
-    override func concludeDragOperation(_ sender: NSDraggingInfo?) {
-        resetDraggingState(false)
-    }
-
-    private func dragOperation(_ location: NSPoint) -> NSDragOperation {
-        let target = targetView(location)
-        let pastDeadzone = target != nil && (window.map { CursorEvents.isAllowedToReactToPointerMovement($0.convertPoint(toScreen: location)) } ?? false)
-        let decision = DragAndDropResolver.dragOver(
-            hasTarget: target != nil,
-            pastDeadzone: pastDeadzone,
-            targetChanged: dragTarget !== target,
-            movedBeyondResetRadius: DragAndDropResolver.movedBeyondResetRadius(from: timerResetLocation, to: location, resetRadius: Self.dragAndDropTimerResetDistance))
-        switch decision {
-        case .noTarget:
-            resetDraggingState(true)
-            return []
-        case .inDeadzone:
-            return .link
-        case .track(let restartTimer):
-            if let target {
-                dragTarget = target
-                if restartTimer { restartDraggingTimer(location) }
-                target.mouseMovedCallback()
-            }
-            return .link
-        }
-    }
-
-    private func restartDraggingTimer(_ location: NSPoint) {
-        timerResetLocation = location
-        dragAndDropTimer?.invalidate()
-        dragAndDropTimer = Timer(timeInterval: Self.dragAndDropTimerDelay, repeats: false, block: { [weak self] _ in
-            guard let self, let dragTarget = self.dragTarget else { return }
-            dragTarget.mouseUpCallback()
-        })
-        dragAndDropTimer?.tolerance = 0.2
-        if let dragAndDropTimer { RunLoop.main.add(dragAndDropTimer, forMode: .common) }
-    }
-
-    func cancelDraggingTimer() {
-        dragAndDropTimer?.invalidate()
-        dragAndDropTimer = nil
-    }
-
-    private func resetDraggingState(_ resetHoveredWindow: Bool) {
-        lastDragLocation = nil
-        dragTarget = nil
-        timerResetLocation = nil
-        dragAndDropTimer?.invalidate()
-        dragAndDropTimer = nil
-        if resetHoveredWindow { TilesView.thumbnailOverView.resetHoveredWindow() }
-    }
-
-    private func targetView(_ location: NSPoint) -> TileView? {
-        let overlay = TilesView.thumbnailOverView
-        return overlay.findTarget(overlay.convert(location, from: nil))
-    }
+    func cancelDraggingTimer() {}
 }
 
 class FlippedView: NSView {
     override var isFlipped: Bool { true }
 }
-
 
 enum Direction {
     case right

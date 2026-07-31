@@ -273,7 +273,12 @@ class TileView: FlippedView {
                 thumbnail.updateContents(screenshot, thumbnailSize)
             } else {
                 // if no thumbnail, show appIcon instead
-                let thumbnailSize = TileView.thumbnailSize(element.icon?.size(), true)
+                // use the same sizing formula as Window.refreshThumbnail (window aspect ratio),
+                // so the tile keeps its size when the preview screenshot lands; sizing from the
+                // square app icon would stretch tiles differently and relayout the panel
+                let thumbnailSize = element.isWindowlessApp || element.size == nil
+                    ? TileView.thumbnailSize(element.icon?.size(), true)
+                    : TileView.thumbnailSize(element.size, false)
                 thumbnail.updateContents(.cgImage(element.icon), thumbnailSize)
             }
         }
@@ -302,50 +307,8 @@ class TileView: FlippedView {
     }
 
     private func applySearchHighlight() {
-        let attributes = baseTitleAttributes()
-        let query = Search.normalizedQuery(SwitcherSession.current?.searchQuery ?? "")
-        let hasAppMatch = !(window_?.swAppResults.isEmpty ?? true)
-        appIconHighlight.isHidden = query.isEmpty || !hasAppMatch
-        if !appIconHighlight.isHidden {
-            if Preferences.effectiveAppearanceStyle(SwitcherSession.activeShortcutIndex) == .appIcons {
-                // match the blue focus outline's visual curvature: same cornerRadius/height ratio,
-                // applied to our smaller rect (the blue outline uses highlightFrame, which is taller).
-                let rect = appIcon.frame.insetBy(dx: -2, dy: -2)
-                appIconHighlight.frame = rect
-                let blueRatio = Appearance.cellCornerRadius / max(highlightFrame.height, 1)
-                appIconHighlight.cornerRadius = rect.height * blueRatio
-            } else {
-                // icons can be small (thumbnails/titles styles) — scale to icon size and use the
-                // squircle curve so the halo matches the macOS app-icon shape at every size.
-                let inset = max(2, appIcon.frame.height * 0.06)
-                let rect = appIcon.frame.insetBy(dx: -inset, dy: -inset)
-                appIconHighlight.frame = rect
-                appIconHighlight.cornerRadius = rect.height * 0.3237
-            }
-            appIconHighlight.backgroundColor = Appearance.searchMatchHighlightColor.cgColor
-        }
-        if query.isEmpty {
-            label.attributedStringValue = NSAttributedString(string: fullTitle, attributes: attributes)
-            return
-        }
-        let clippingAttributes = baseTitleAttributes(true)
-        let spanRanges = searchSpanRanges()
-        let titleLength = Array(fullTitle).count
-        let highlightedIndexes = highlightedIndexes(spanRanges, titleLength)
-        let truncation = truncatedDisplay(fullTitle, maxWidth: label.frame.size.width, mode: label.lineBreakMode, attributes: clippingAttributes)
-        let attributed = NSMutableAttributedString(string: truncation.text, attributes: clippingAttributes)
-        for range in visibleHighlightRanges(truncation.visibleToOriginal, highlightedIndexes) {
-            attributed.addAttribute(TileTitleView.searchHighlightBackgroundKey, value: Appearance.searchMatchHighlightColor, range: range)
-            attributed.addAttribute(.foregroundColor, value: Appearance.searchMatchForegroundColor, range: range)
-        }
-        let visibleOriginalIndexes = Set(truncation.visibleToOriginal.compactMap { $0 })
-        let hasHiddenHighlights = highlightedIndexes.contains { !visibleOriginalIndexes.contains($0) }
-        if hasHiddenHighlights, let ellipsisIndex = truncation.ellipsisIndex {
-            let range = NSRange(location: ellipsisIndex, length: 1)
-            attributed.addAttribute(TileTitleView.searchHighlightBackgroundKey, value: Appearance.searchMatchHighlightColor, range: range)
-            attributed.addAttribute(.foregroundColor, value: Appearance.searchMatchForegroundColor, range: range)
-        }
-        label.attributedStringValue = attributed
+        // Search mode was removed from this build; tiles always render their plain title.
+        label.attributedStringValue = NSAttributedString(string: fullTitle, attributes: baseTitleAttributes())
     }
 
     static func invalidateTitleAttributesCache() {
@@ -362,140 +325,6 @@ class TileView: FlippedView {
         paragraphStyle.baseWritingDirection = .leftToRight
         paragraphStyle.lineBreakMode = forceClipping ? .byClipping : label.lineBreakMode
         return [.foregroundColor: Appearance.fontColor, .font: Appearance.font, .paragraphStyle: paragraphStyle]
-    }
-
-    private func searchSpanRanges() -> [NSRange] {
-        var spanRanges = [NSRange]()
-        if Preferences.showTitles == .appName {
-            for result in window_?.swAppResults ?? [] {
-                spanRanges.append(NSRange(location: result.span.lowerBound, length: result.span.count))
-            }
-            return spanRanges
-        }
-        if Preferences.showTitles == .appNameAndWindowTitle {
-            let appName = window_?.application.localizedName ?? ""
-            let windowTitle = window_?.title ?? ""
-            let offset = (appName.isEmpty || appName == windowTitle) ? 0 : (appName + " - ").count
-            for result in window_?.swAppResults ?? [] {
-                spanRanges.append(NSRange(location: result.span.lowerBound, length: result.span.count))
-            }
-            for result in window_?.swTitleResults ?? [] {
-                spanRanges.append(NSRange(location: offset + result.span.lowerBound, length: result.span.count))
-            }
-            return spanRanges
-        }
-        for result in window_?.swTitleResults ?? [] {
-            spanRanges.append(NSRange(location: result.span.lowerBound, length: result.span.count))
-        }
-        return spanRanges
-    }
-
-    private func highlightedIndexes(_ ranges: [NSRange], _ titleLength: Int) -> Set<Int> {
-        var indexes = Set<Int>()
-        for range in ranges {
-            if range.length <= 0 { continue }
-            let start = max(0, range.location)
-            let end = min(titleLength, start + range.length)
-            if start >= end { continue }
-            for index in start..<end {
-                indexes.insert(index)
-            }
-        }
-        return indexes
-    }
-
-    private func visibleHighlightRanges(_ visibleToOriginal: [Int?], _ highlightedIndexes: Set<Int>) -> [NSRange] {
-        var ranges = [NSRange]()
-        var runStart: Int?
-        for (displayIndex, originalIndex) in visibleToOriginal.enumerated() {
-            let highlighted = originalIndex.flatMap { highlightedIndexes.contains($0) } ?? false
-            if highlighted {
-                if runStart == nil {
-                    runStart = displayIndex
-                }
-            } else if let runStartValue = runStart {
-                ranges.append(NSRange(location: runStartValue, length: displayIndex - runStartValue))
-                runStart = nil
-            }
-        }
-        if let runStart {
-            ranges.append(NSRange(location: runStart, length: visibleToOriginal.count - runStart))
-        }
-        return ranges
-    }
-
-    private func truncatedDisplay(_ title: String, maxWidth: CGFloat, mode: NSLineBreakMode, attributes: [NSAttributedString.Key: Any]) -> (text: String, visibleToOriginal: [Int?], ellipsisIndex: Int?) {
-        let chars = Array(title)
-        if chars.isEmpty { return ("", [], nil) }
-        if maxWidth <= 0 { return ("", [], nil) }
-        if measuredWidth(title, attributes) <= maxWidth {
-            return (title, Array(0..<chars.count).map { Optional($0) }, nil)
-        }
-        let ellipsis = "…"
-        if measuredWidth(ellipsis, attributes) > maxWidth {
-            return (ellipsis, [nil], 0)
-        }
-        if mode == .byTruncatingHead {
-            var low = 0
-            var high = chars.count
-            while low < high {
-                let mid = (low + high + 1) / 2
-                let candidate = ellipsis + String(chars.suffix(mid))
-                if measuredWidth(candidate, attributes) <= maxWidth {
-                    low = mid
-                } else {
-                    high = mid - 1
-                }
-            }
-            let suffixCount = low
-            let suffixStart = chars.count - suffixCount
-            let text = ellipsis + String(chars.suffix(suffixCount))
-            let mapping = [Int?](arrayLiteral: nil) + Array(suffixStart..<chars.count).map { Optional($0) }
-            return (text, mapping, 0)
-        }
-        if mode == .byTruncatingMiddle {
-            var leftCount = (chars.count + 1) / 2
-            var rightStart = leftCount
-            var candidate = String(chars.prefix(leftCount)) + ellipsis + String(chars.suffix(chars.count - rightStart))
-            while measuredWidth(candidate, attributes) > maxWidth && (leftCount > 0 || rightStart < chars.count) {
-                if rightStart < chars.count {
-                    rightStart += 1
-                }
-                candidate = String(chars.prefix(leftCount)) + ellipsis + String(chars.suffix(chars.count - rightStart))
-                if measuredWidth(candidate, attributes) <= maxWidth {
-                    break
-                }
-                if leftCount > 0 {
-                    leftCount -= 1
-                }
-                candidate = String(chars.prefix(leftCount)) + ellipsis + String(chars.suffix(chars.count - rightStart))
-            }
-            if measuredWidth(candidate, attributes) > maxWidth {
-                return (ellipsis, [nil], 0)
-            }
-            let text = String(chars.prefix(leftCount)) + ellipsis + String(chars.suffix(chars.count - rightStart))
-            let mapping = Array(0..<leftCount).map { Optional($0) } + [nil] + Array(rightStart..<chars.count).map { Optional($0) }
-            return (text, mapping, leftCount)
-        }
-        var low = 0
-        var high = chars.count
-        while low < high {
-            let mid = (low + high + 1) / 2
-            let candidate = String(chars.prefix(mid)) + ellipsis
-            if measuredWidth(candidate, attributes) <= maxWidth {
-                low = mid
-            } else {
-                high = mid - 1
-            }
-        }
-        let prefixCount = low
-        let text = String(chars.prefix(prefixCount)) + ellipsis
-        let mapping = Array(0..<prefixCount).map { Optional($0) } + [nil]
-        return (text, mapping, prefixCount)
-    }
-
-    private func measuredWidth(_ text: String, _ attributes: [NSAttributedString.Key: Any]) -> CGFloat {
-        (text as NSString).size(withAttributes: attributes).width
     }
 
     private func updateSizes(_ newHeight: CGFloat) {

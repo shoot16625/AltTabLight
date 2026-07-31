@@ -216,9 +216,6 @@ class Applications {
         runningApps.forEach { runningApp in
             let bundleIdentifier = runningApp.bundleIdentifier
             let processIdentifier = runningApp.processIdentifier
-            if bundleIdentifier == "com.apple.dock" {
-                DockEvents.observe(processIdentifier)
-            }
             // com.apple.universalcontrol always fails subscribeToNotification. We blacklist it to save resources on everyone's machines
             guard bundleIdentifier != "com.apple.universalcontrol" else { return }
             // classify off-main (process & sysctl IPC), then create on main if it's a real app (#5721).

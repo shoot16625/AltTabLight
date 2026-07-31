@@ -125,6 +125,7 @@
 "Hide status icons" = "ステータスアイコンを非表示";
 "Hide windows" = "ウインドウを非表示";
 "Hide/Show app" = "App の表示/非表示";
+"Hold to trigger switcher" = "スイッチャーを起動するキー";
 "Hold" = "押し続ける";
 "I already have a license key" = "ライセンスキーをすでに持っています";
 "I can move myself to the Applications folder if you'd like." = "ご希望であれば、アプリケーションフォルダに自動で移動できます。";

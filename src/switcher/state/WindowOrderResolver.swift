@@ -13,27 +13,19 @@ import Foundation
 
 enum OrderSortType: Equatable { case recentlyFocused, recentlyCreated, alphabetical, space }
 
-/// A window's data + its app's data + its (query-dependent) search rank, for ordering.
+/// A window's data + its app's data, for ordering.
 struct OrderWindow: Equatable {
     let state: WindowState
     let app: ApplicationState
-    let searchMatches: Bool       // Search.matches (only meaningful when search is active)
-    let searchRelevance: Double   // Search.relevance
 }
 
 enum WindowOrderResolver {
     /// Strict-weak-ordering "should `a` sort before `b`?", mirroring the original `Windows.sort` closure.
     static func isOrderedBefore(_ a: OrderWindow, _ b: OrderWindow,
-                                searchActive: Bool = false,
                                 windowlessAtEnd: Bool = false,   // showWindowlessApps == .showAtTheEnd
                                 hiddenAtEnd: Bool = false,       // showHiddenWindows == .showAtTheEnd
                                 minimizedAtEnd: Bool = false,    // showMinimizedWindows == .showAtTheEnd
                                 sortType: OrderSortType = .recentlyFocused) -> Bool {
-        if searchActive {
-            if a.searchMatches != b.searchMatches { return a.searchMatches }
-            if a.searchRelevance != b.searchRelevance { return a.searchRelevance > b.searchRelevance }
-            return a.state.lastFocusOrder < b.state.lastFocusOrder
-        }
         // separate buckets for these window types (pushed to the end)
         if windowlessAtEnd && a.state.isWindowlessApp != b.state.isWindowlessApp { return b.state.isWindowlessApp }
         if hiddenAtEnd && a.app.isHidden != b.app.isHidden { return b.app.isHidden }

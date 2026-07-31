@@ -4,34 +4,34 @@ class Windows {
     static var list = [Window]()
     private(set) static var byWindowId = [CGWindowID: Window]()
     private static var lastWindowActivityType = WindowActivityType.none
-    private static var shouldSelectBestMatchOnSearchChange = false
-    private static var shouldRestoreDefaultSelectionOnSearchClear = false
 
     static func shouldDisplay(_ window: Window) -> Bool {
-        window.shouldShowTheUser && Search.matches(window, query: (SwitcherSession.current?.searchQuery ?? ""))
+        window.shouldShowTheUser
     }
 
-    static func updateSearchQuery(_ query: String) {
-        let previousTrimmedQuery = Search.normalizedQuery(SwitcherSession.current?.searchQuery ?? "")
-        let newTrimmedQuery = Search.normalizedQuery(query)
-        SwitcherSession.current?.searchQuery = query
-        guard let session = SwitcherSession.current else {
-            shouldSelectBestMatchOnSearchChange = false
-            shouldRestoreDefaultSelectionOnSearchClear = false
-            sort()
-            return
+    /// Release every cached window thumbnail + pooled TileView image so their pixel buffers
+    /// (IOSurfaces) can deallocate while the switcher is hidden. This is the dominant controllable
+    /// memory of the app: thumbnails are re-captured on the next show, on demand.
+    static func releaseThumbnails() {
+        Logger.debug { "releasing \(list.count) window thumbnails" }
+        for view in TilesView.recycledViews {
+            view.thumbnail.releaseImage()
+            view.appIcon.releaseImage()
+            view.window_ = nil
         }
-        if previousTrimmedQuery != newTrimmedQuery {
-            if newTrimmedQuery.isEmpty {
-                shouldRestoreDefaultSelectionOnSearchClear = !previousTrimmedQuery.isEmpty
-                shouldSelectBestMatchOnSearchChange = false
-            } else {
-                shouldSelectBestMatchOnSearchChange = true
-                shouldRestoreDefaultSelectionOnSearchClear = false
-                session.hoveredIndex = nil
-            }
+        for window in list {
+            window.thumbnail = nil
         }
-        sort()
+        // Detach every tile layer from the panel so CoreAnimation drops their backing stores
+        // (CG raster data / layer caches) while the switcher is hidden. The panel window stays
+        // alive for a fast re-show, but an empty document view costs ~0 pixels of memory.
+        TilesView.scrollView?.documentView?.subviews = []
+        // Drop the window's content view too: the visual-effect view (LiquidGlass on macOS 26)
+        // keeps a multi-MB rasterized backing while attached, even when the window is hidden.
+        // `buildUiAndShowPanel` re-attaches `TilesView.contentView` on the next show.
+        if TilesPanel.shared.contentView === TilesView.contentView {
+            TilesPanel.shared.contentView = nil
+        }
     }
 
     static func updateIsFullscreenOnCurrentSpace() {
@@ -48,11 +48,9 @@ class Windows {
 
     static func voiceOverWindow(_ windowIndex: Int = (SwitcherSession.current?.selectedIndex ?? 0)) {
         guard SwitcherSession.isActive && TilesPanel.shared.isKeyWindow else { return }
-        if TilesView.isSearchEditing { return }
         // it seems that sometimes makeFirstResponder is called before the view is visible
         // and it creates a delay in showing the main window; calling it with some delay seems to work around this
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(10)) {
-            if TilesView.isSearchEditing { return }
             let window = TilesView.recycledViews[windowIndex]
             if window.window_ != nil && window.window != nil {
                 TilesPanel.shared.makeFirstResponder(window)
@@ -172,8 +170,6 @@ class Windows {
         let snapshot = selectionSnapshot()
         let inputs = makeSelectionInputs(snapshot, session: session)
         let decision = SelectionResolver.decide(inputs)
-        shouldRestoreDefaultSelectionOnSearchClear = false
-        shouldSelectBestMatchOnSearchChange = false
         applySelectionDecision(decision, session: session)
     }
 
@@ -194,9 +190,7 @@ class Windows {
             selectedIndex: session.selectedIndex,
             selectedTarget: session.selectedTarget,
             useLastFocusedRule: Applications.frontmostPid != nil
-                && Preferences.windowOrder[session.shortcutIndex] != .recentlyFocused,
-            restoreDefaultOnSearchClear: shouldRestoreDefaultSelectionOnSearchClear,
-            bestMatchOnSearchChange: shouldSelectBestMatchOnSearchChange)
+                && Preferences.windowOrder[session.shortcutIndex] != .recentlyFocused)
     }
 
     private static func applySelectionDecision(_ decision: SelectionDecision, session: SwitcherSession) {
@@ -320,21 +314,17 @@ class Windows {
 
     /// reordered list based on preferences, keeping the original index
     private static func sort() {
-        let trimmedQuery = Search.normalizedQuery((SwitcherSession.current?.searchQuery ?? ""))
         let shortcutIndex = (SwitcherSession.current?.shortcutIndex ?? 0)
         // Hoisted once per sort: locals are captured by the comparator closure so each of the
         // O(n log n) comparisons reads them directly.
-        let searchActive = !trimmedQuery.isEmpty
         let windowlessAtEnd = Preferences.showWindowlessApps(shortcutIndex) == .showAtTheEnd
         let hiddenAtEnd = Preferences.showHiddenWindows(shortcutIndex) == .showAtTheEnd
         let minimizedAtEnd = Preferences.showMinimizedWindows(shortcutIndex) == .showAtTheEnd
         let sortType = orderSortType(Preferences.windowOrder(shortcutIndex))
-        // Precompute each window's ordering facts once (O(n) Search calls), then sort on the snapshots.
-        let facts = Dictionary(uniqueKeysWithValues: list.map { (ObjectIdentifier($0), orderWindow($0, trimmedQuery)) })
+        let facts = Dictionary(uniqueKeysWithValues: list.map { (ObjectIdentifier($0), orderWindow($0)) })
         list.sort {
             WindowOrderResolver.isOrderedBefore(
                 facts[ObjectIdentifier($0)]!, facts[ObjectIdentifier($1)]!,
-                searchActive: searchActive,
                 windowlessAtEnd: windowlessAtEnd,
                 hiddenAtEnd: hiddenAtEnd,
                 minimizedAtEnd: minimizedAtEnd,
@@ -342,12 +332,10 @@ class Windows {
         }
     }
 
-    private static func orderWindow(_ window: Window, _ query: String) -> OrderWindow {
+    private static func orderWindow(_ window: Window) -> OrderWindow {
         OrderWindow(
             state: window.state,
-            app: window.application.state,
-            searchMatches: query.isEmpty ? false : Search.matches(window, query: query),
-            searchRelevance: query.isEmpty ? 0 : Search.relevance(for: window, query: query))
+            app: window.application.state)
     }
 
     private static func orderSortType(_ p: WindowOrderPreference) -> OrderSortType {

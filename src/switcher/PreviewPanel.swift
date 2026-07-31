@@ -71,6 +71,13 @@ class PreviewPanel: NSPanel {
         }
     }
 
+    /// Called when the switcher hides: the full-resolution preview screenshot is no longer
+    /// needed, so drop the IOSurface instead of keeping it pinned in `previewView.contents`.
+    static func clearImage() {
+        previewView.releaseImage()
+        currentId = nil
+    }
+
     private static func repositionAndResize( _ position: CGPoint, _ size: CGSize) {
         var frame = NSRect(origin: position, size: size)
         // Flip Y coordinate from Quartz (0,0 at bottom-left) to Cocoa coordinates (0,0 at top-left)

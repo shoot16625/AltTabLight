@@ -18,8 +18,6 @@ struct SelectionInputs: Equatable {
     /// True iff `Preferences.windowOrder[shortcutIndex] != .recentlyFocused`
     /// AND `Applications.frontmostPid != nil`. Gates the alpha/space-ordering initial-pick path.
     let useLastFocusedRule: Bool
-    let restoreDefaultOnSearchClear: Bool
-    let bestMatchOnSearchChange: Bool
 }
 
 /// What the kernel recommends. Wrapper translates this into side effects (highlight redraws,
@@ -48,20 +46,12 @@ enum SelectionResolver {
     /// behavior-preserving extraction can be verified against the running app before we touch
     /// the logic.
     static func decide(_ i: SelectionInputs) -> SelectionDecision {
-        // 1) Search-clear path takes precedence — runs even when no visible windows.
-        if i.restoreDefaultOnSearchClear {
-            return resetInitialPick(i)
-        }
-        // 2) Empty visible list.
+        // 1) Empty visible list.
         let visibleIndexes = i.list.indices.filter { i.list[$0].visible }
-        guard let firstVisibleIndex = visibleIndexes.first else {
+        guard !visibleIndexes.isEmpty else {
             return .clearTargetAndHover
         }
-        // 3) Search-best-match path.
-        if i.bestMatchOnSearchChange {
-            return .selectAt(firstVisibleIndex)
-        }
-        // 4) "From scratch" only when there's no user selection yet — first refresh of the
+        // 2) "From scratch" only when there's no user selection yet — first refresh of the
         // session. Previously this also fired whenever the MRU-focused window changed mid-show,
         // which short-circuited past target preservation and made the highlight jump (#5665).
         // Removed: AX events that reorder the list during display now fall through to
@@ -69,11 +59,11 @@ enum SelectionResolver {
         if i.selectedTarget == nil {
             return resetInitialPick(i)
         }
-        // 5) Try to restore the user's chosen target by id.
+        // 3) Try to restore the user's chosen target by id.
         if let targetIndex = findTarget(i.list, i.selectedTarget) {
             return .selectAt(targetIndex)
         }
-        // 6) Target gone — adapt to the closest visible.
+        // 4) Target gone — adapt to the closest visible.
         return adapt(i, visibleIndexes: visibleIndexes, lastVisible: visibleIndexes.last!)
     }
 

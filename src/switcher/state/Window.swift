@@ -32,10 +32,6 @@ class Window {
     var axObserver: AXObserver?
     var rowIndex: Int?
     var debugId: String!
-    var lastSearchQuery: String?
-    var swAppResults: [SWResult] = []
-    var swTitleResults: [SWResult] = []
-    var swBestSimilarity = 0.0
 
     /// Forwards every `WindowState` field by name — `window.title` resolves to `state.title`,
     /// `window.isFullscreen = true` writes through. Replaces a stack of one-per-field computed
@@ -117,7 +113,6 @@ class Window {
         self.position = position
         self.isFullscreen = isFullscreen ?? false
         self.isMinimized = isMinimized ?? false
-        lastSearchQuery = nil
         recomputeIsPhantom()
     }
 
@@ -255,8 +250,8 @@ class Window {
             WindowThumbnails.previewSelectedIfNeeded()
         } else if self.isWindowlessApp || cgWindowId == nil {
             if let bundleUrl = application.bundleURL, self.isWindowlessApp {
-                if (try? NSWorkspace.shared.launchApplication(at: bundleUrl, configuration: [:])) == nil {
-                    application.runningApplication.activate(options: .activateAllWindows)
+                NSWorkspace.shared.openApplication(at: bundleUrl, configuration: .init()) { _, _ in
+                    self.application.runningApplication.activate(options: .activateAllWindows)
                 }
             } else {
                 application.runningApplication.activate(options: .activateAllWindows)
