@@ -58,6 +58,14 @@ class Application: NSObject {
     ///   * icon.draw() -> returns nil for some users (could never reproduce it locally)
     ///   * icon.bestRepresentation() > bestRep.draw(in:) -> returns nil for some users (could never reproduce it locally)
     /// MacOS Big Sur also introduced a constant padding around app icons. It was later increased with Tahoe. We have to crop it
+    /// `runningApplication.icon` is cached by AppKit for the app's lifetime, along with the large IconServices
+    /// render (~7MB shared-memory mapping for some apps) made when we rasterize it. A fresh NSImage from the
+    /// bundle path is released after rasterizing, so that mapping is freed.
+    func rasterizedIcon() -> CGImage? {
+        let icon = runningApplication.bundleURL.map { NSWorkspace.shared.icon(forFile: $0.path) } ?? runningApplication.icon
+        return Application.appIconWithoutPadding(icon)
+    }
+
     static func appIconWithoutPadding(_ icon: NSImage?) -> CGImage? {
         guard let icon else { return nil }
         let finalWidth = max(TilesPanel.maxPossibleAppIconSize.width, TilesPanel.maxPossibleAppIconSize.height)
@@ -150,7 +158,7 @@ class Application: NSObject {
         guard icon == nil else { return }
         BackgroundWork.screenshotsQueue.addOperation { [weak self] in
             guard let self, self.icon == nil else { return }
-            let r = Application.appIconWithoutPadding(runningApplication.icon)
+            let r = self.rasterizedIcon()
             DispatchQueue.main.async { [weak self] in
                 self?.icon = r
             }
