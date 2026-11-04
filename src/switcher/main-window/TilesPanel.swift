@@ -122,8 +122,12 @@ class TilesPanel: NSPanel {
                     max(acc.1, size.height * screen.backingScaleFactor))
             }
         }
-        maxPossibleAppIconSize = NSSize(width: w.rounded(), height: h.rounded())
+        maxPossibleAppIconSize = NSSize(width: min(w, maxAppIconPixels).rounded(), height: min(h, maxAppIconPixels).rounded())
     }
+
+    /// App icons are kept rasterized for every running app, and CoreAnimation keeps a same-size copy once
+    /// shown. Uncapped, a thumbnail-sized icon (~1000px) costs ~8.5MB per app; 256px costs ~0.5MB.
+    private static let maxAppIconPixels: CGFloat = 256
 }
 
 extension TilesPanel: NSWindowDelegate {
