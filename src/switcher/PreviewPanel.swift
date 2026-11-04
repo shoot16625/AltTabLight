@@ -87,11 +87,36 @@ class PreviewPanel: NSPanel {
     }
 }
 
+/// The border is a CAShapeLayer instead of a `draw(_:)` override: drawing allocates a window-sized backing
+/// store (~11MB for a large window, x2 buffered) that stays pinned after the panel hides; a shape layer has none.
 private class BorderView: NSView {
-    override func draw(_ dirtyRect: NSRect) {
-        let path = NSBezierPath(rect: bounds)
-        path.append(NSBezierPath(roundedRect: bounds.insetBy(dx: 5, dy: 5), xRadius: 5, yRadius: 5).reversed)
-        NSColor.systemAccentColor.withAlphaComponent(0.5).setFill()
-        path.fill()
+    private let shapeLayer = CAShapeLayer()
+
+    override init(frame frameRect: NSRect = .zero) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        shapeLayer.fillRule = .evenOdd
+        shapeLayer.actions = ["path": NSNull(), "bounds": NSNull(), "position": NSNull()]
+        layer!.addSublayer(shapeLayer)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("Class only supports programmatic initialization")
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        updatePath()
+    }
+
+    private func updatePath() {
+        shapeLayer.frame = bounds
+        // CGPath.addRoundedRect traps when the corner radius exceeds half the rect
+        guard bounds.width > 20, bounds.height > 20 else { shapeLayer.path = nil; return }
+        let path = CGMutablePath()
+        path.addRect(bounds)
+        path.addRoundedRect(in: bounds.insetBy(dx: 5, dy: 5), cornerWidth: 5, cornerHeight: 5)
+        shapeLayer.path = path
+        shapeLayer.fillColor = NSColor.systemAccentColor.withAlphaComponent(0.5).cgColor
     }
 }
