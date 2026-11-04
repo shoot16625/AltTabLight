@@ -323,7 +323,7 @@ class Applications {
         for app in list {
             BackgroundWork.screenshotsQueue.addOperation { [weak app] in
                 guard let app else { return }
-                let r = Application.appIconWithoutPadding(app.runningApplication.icon)
+                let r = app.rasterizedIcon()
                 DispatchQueue.main.async { [weak app] in
                     app?.icon = r
                 }
